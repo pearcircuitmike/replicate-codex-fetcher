@@ -16,27 +16,21 @@ const hardwareCostsPerSecond = {
   "Nvidia A100 GPU": 0.0023,
 };
 
-// Function to get the runtime cost data (costToRun) for a model
 async function getPricing(creator, modelName) {
   try {
-    // Construct the model URL (properly encoding the values)
     const modelUrl = `https://replicate.com/${encodeURIComponent(
       creator
     )}/${encodeURIComponent(modelName)}`;
 
-    // Fetch the model page HTML content
     const modelPageResponse = await axios.get(modelUrl);
     const $ = cheerio.load(modelPageResponse.data);
 
-    // Extract the text content of the #performance div
     const performanceText = $("#performance").text();
 
-    // Define the regular expressions to match the hardware type and typical completion time
     const hardwareTypePattern = /Predictions run on (.+?) hardware/;
     const typicalCompletionTimeSecondsPattern =
       /Predictions typically complete within (\d+) seconds/;
 
-    // Extract the hardware type and typical completion time using the regular expressions
     const hardwareTypeMatch = performanceText.match(hardwareTypePattern);
     const timeMatchSeconds = performanceText.match(
       typicalCompletionTimeSecondsPattern
@@ -46,7 +40,6 @@ async function getPricing(creator, modelName) {
       ? parseFloat(timeMatchSeconds[1])
       : null;
 
-    // Calculate the costToRun value (if hardware type and typical completion time are available)
     let costToRun = null;
     if (
       hardwareType &&
@@ -57,8 +50,11 @@ async function getPricing(creator, modelName) {
         hardwareCostsPerSecond[hardwareType] * typicalCompletionTimeSeconds;
     }
 
-    // Return the costToRun value
-    return costToRun;
+    return {
+      costToRun,
+      hardwareType,
+      typicalCompletionTimeSeconds,
+    };
   } catch (error) {
     console.error(
       "Failed to get runtime cost data from Replicate model page.",
@@ -68,10 +64,8 @@ async function getPricing(creator, modelName) {
   }
 }
 
-// Function to fetch all models and get pricing for each model
 async function updateAllModelsPricing() {
   try {
-    // Fetch all models from the modelsData table
     const { data: models, error: fetchError } = await supabase
       .from("modelsData")
       .select("*");
@@ -80,24 +74,26 @@ async function updateAllModelsPricing() {
       throw fetchError;
     }
 
-    // Iterate through each model and update its runtime
-
     for (const model of models) {
-      // Get pricing for the current model
-      const costToRun = await getPricing(model.creator, model.modelName);
+      const pricingData = await getPricing(model.creator, model.modelName);
 
-      // If costToRun is null, skip updating the model record
-      if (costToRun === null) {
+      if (pricingData === null) {
         console.log(
-          `No costToRun data available for model ${model.modelName}. Skipping update.`
+          `No pricing data available for model ${model.modelName}. Skipping update.`
         );
         continue;
       }
 
-      // Update the model record in the modelsData table
+      const { costToRun, hardwareType, typicalCompletionTimeSeconds } =
+        pricingData;
+
       const { error: updateError } = await supabase
         .from("modelsData")
-        .update({ costToRun })
+        .update({
+          costToRun,
+          predictionHardware: hardwareType,
+          avgCompletionTime: typicalCompletionTimeSeconds,
+        })
         .match({ id: model.id });
 
       if (updateError) {
@@ -105,16 +101,16 @@ async function updateAllModelsPricing() {
       }
 
       console.log(
-        `Updated costToRun for model ${model.modelName}: ${costToRun}`
+        `Updated pricing data for model ${model.modelName}: costToRun=${costToRun}, predictionHardware=${hardwareType}, avgCompletionTime=${typicalCompletionTimeSeconds}`
       );
     }
 
     console.log(
-      "Runtime cost data successfully updated for all models in Supabase table."
+      "Pricing data successfully updated for all models in Supabase table."
     );
   } catch (error) {
     console.error(
-      "Failed to update runtime cost data for models in Supabase table.",
+      "Failed to update pricing data for models in Supabase table.",
       error.message
     );
   }

@@ -39,7 +39,7 @@ async function classifyModelsAndUpdateTags() {
      categories, based on your best guess. You must choose a 
      category and you must respond exactly with the classification and 
      no other words. For example, you can respond "Image-to-Image",
-      "Text-to-Image", etc
+      "Text-to-Image", etc - you SHOULD NOT REPLY WITH ANYTHING ELSE.
     Categories: ${classificationCategories.join(", ")}
     Model: ${model.modelName}
     Description: ${description}
