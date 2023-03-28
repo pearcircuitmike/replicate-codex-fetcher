@@ -124,3 +124,5 @@ async function updateModelsData() {
 
 // Call the updateModelsData function to start the update process
 updateModelsData();
+
+export { updateModelsData };

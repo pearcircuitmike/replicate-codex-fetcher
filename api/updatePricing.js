@@ -118,3 +118,4 @@ async function updateAllModelsPricing() {
 
 // Call the updateAllModelsPricing function to start the update process
 updateAllModelsPricing();
+export { updateAllModelsPricing };
