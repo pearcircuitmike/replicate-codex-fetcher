@@ -7,7 +7,7 @@ const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-async function saveCostToRunHistory() {
+export async function saveCostToRunHistory() {
   try {
     // Fetch all models from the modelsData table
     const { data: models, error: fetchError } = await supabase

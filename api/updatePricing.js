@@ -16,7 +16,7 @@ const hardwareCostsPerSecond = {
   "Nvidia A100 GPU": 0.0023,
 };
 
-async function getPricing(creator, modelName) {
+export async function getPricing(creator, modelName) {
   try {
     const modelUrl = `https://replicate.com/${encodeURIComponent(
       creator

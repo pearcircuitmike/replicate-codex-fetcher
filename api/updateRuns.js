@@ -21,7 +21,7 @@ function formatDate(date) {
 }
 
 // Function to update a single model
-async function updateModel(model, lastUpdated) {
+export async function updateModel(model, lastUpdated) {
   try {
     // Construct the model URL for the Replicate API
     const modelUrl = `https://api.replicate.com/v1/models/${encodeURIComponent(

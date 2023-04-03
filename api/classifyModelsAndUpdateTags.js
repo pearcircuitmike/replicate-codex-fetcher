@@ -13,7 +13,7 @@ const classificationCategories = types.flatMap((fromType) =>
   types.map((toType) => `${fromType}-to-${toType}`)
 );
 
-async function classifyModelsAndUpdateTags() {
+export async function classifyModelsAndUpdateTags() {
   // Log the values of the environment variables
   console.log(`OpenAI API Key: ${openaiApiKey}`);
   console.log(`Supabase URL: ${supabaseUrl}`);
