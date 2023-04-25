@@ -14,6 +14,9 @@ const hardwareCostsPerSecond = {
   CPU: 0.0002,
   "Nvidia T4 GPU": 0.00055,
   "Nvidia A100 GPU": 0.0023,
+  "Nvidia T4 GPU": 0.00055,
+  "Nvidia A100 (40GB) GPU": 0.0023,
+  "Nvidia A100 80GB GPU": 0.0032,
 };
 
 export async function getPricing(creator, modelName) {
