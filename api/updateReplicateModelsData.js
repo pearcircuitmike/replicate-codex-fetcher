@@ -56,7 +56,7 @@ export async function updateModel(model, lastUpdated) {
 
     // Update the model record in the modelsData table
     const { error: updateError } = await supabase
-      .from("modelsData")
+      .from("replicateModelsData")
       .update(updatedData)
       .match({ id: model.id });
 
@@ -76,11 +76,11 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function updateModelsData() {
+async function updateReplicateModelsData() {
   try {
     // Fetch all models from the modelsData table
     const { data: models, error: fetchError } = await supabase
-      .from("modelsData")
+      .from("replicateModelsData")
       .select("*");
 
     if (fetchError) {
@@ -122,7 +122,7 @@ async function updateModelsData() {
   }
 }
 
-// Call the updateModelsData function to start the update process
-updateModelsData();
+// Call the updateReplicateModelsData function to start the update process
+updateReplicateModelsData();
 
-export { updateModelsData };
+export { updateReplicateModelsData };

@@ -11,7 +11,7 @@ export async function saveCostToRunHistory() {
   try {
     // Fetch all models from the modelsData table
     const { data: models, error: fetchError } = await supabase
-      .from("modelsData")
+      .from("replicateModelsData")
       .select("*");
 
     if (fetchError) {
@@ -20,14 +20,9 @@ export async function saveCostToRunHistory() {
 
     // Check if models data is available
     if (!models || models.length === 0) {
-      console.log("No models data available in the modelsData table.");
+      console.log("No models data available in the replicateModelsData table.");
       return;
     }
-
-    // Get the current date and time
-    const currentDate = new Date();
-    // Calculate the date and time 24 hours before the current time
-    const oneDayBefore = new Date(currentDate.getTime() - 24 * 60 * 60 * 1000);
 
     for (const model of models) {
       // Check for the latest entry for the model in the costToRunHistory table
@@ -35,7 +30,7 @@ export async function saveCostToRunHistory() {
         await supabase
           .from("costToRunHistory")
           .select("*")
-          .eq("model_id", model.id)
+          .eq("modelId", model.id)
           .order("timestamp", { ascending: false })
           .limit(1);
 
@@ -43,41 +38,22 @@ export async function saveCostToRunHistory() {
         throw costToRunHistoryError;
       }
 
-      if (
-        costToRunHistoryData &&
-        costToRunHistoryData.length > 0 &&
-        new Date(costToRunHistoryData[0].timestamp) >= oneDayBefore
-      ) {
-        // Update the existing costToRun history data
-        console.log(
-          `Updating existing costToRun history data for model ID ${model.id}`
-        );
-        const { error: updateError } = await supabase
-          .from("costToRunHistory")
-          .update({ cost_to_run: model.costToRun })
-          .eq("id", costToRunHistoryData[0].id);
+      // Insert new costToRun history data
+      console.log(
+        `Inserting new costToRun history data for model ID ${model.id}`
+      );
+      const { error: insertError } = await supabase
+        .from("costToRunHistory")
+        .insert([
+          {
+            modelId: model.id,
+            timestamp: new Date(),
+            cost_to_run: model.costToRun,
+          },
+        ]);
 
-        if (updateError) {
-          throw updateError;
-        }
-      } else {
-        // Insert new costToRun history data
-        console.log(
-          `Inserting new costToRun history data for model ID ${model.id}`
-        );
-        const { error: insertError } = await supabase
-          .from("costToRunHistory")
-          .insert([
-            {
-              model_id: model.id,
-              timestamp: currentDate,
-              cost_to_run: model.costToRun,
-            },
-          ]);
-
-        if (insertError) {
-          throw insertError;
-        }
+      if (insertError) {
+        throw insertError;
       }
     }
 

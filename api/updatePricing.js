@@ -70,7 +70,7 @@ export async function getPricing(creator, modelName) {
 async function updateAllModelsPricing() {
   try {
     const { data: models, error: fetchError } = await supabase
-      .from("modelsData")
+      .from("replicateModelsData")
       .select("*");
 
     if (fetchError) {
@@ -91,7 +91,7 @@ async function updateAllModelsPricing() {
         pricingData;
 
       const { error: updateError } = await supabase
-        .from("modelsData")
+        .from("replicateModelsData")
         .update({
           costToRun,
           predictionHardware: hardwareType,
