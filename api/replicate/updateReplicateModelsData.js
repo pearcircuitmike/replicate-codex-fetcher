@@ -4,6 +4,8 @@ import pLimit from "p-limit";
 import dotenv from "dotenv";
 dotenv.config();
 
+//NEED TO SPLIT THIS INTO ONE TO UPDATE IMAGES IN EXAMPLE, ONE TO GET RUNS, ONE TO GET PRICING
+
 // Define your Supabase URL and key
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
