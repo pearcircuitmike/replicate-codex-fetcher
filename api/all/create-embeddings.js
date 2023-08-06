@@ -19,7 +19,7 @@ async function createEmbeddings() {
       "creator, modelName, generatedSummary, generatedUseCase, description, tags, id"
     ) // Specify columns
     .is("embedding", null)
-    .gt("runs", 5000); // Only select models with runs greater than 1000
+    .gt("runs", 10000); // Only select models with runs greater than 1000
 
   if (fetchError) {
     console.error(fetchError);
