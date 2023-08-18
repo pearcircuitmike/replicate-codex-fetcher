@@ -24,7 +24,7 @@ const types = ["Text", "Image", "Audio", "Video"];
 const classificationCategories = types.flatMap((fromType) =>
   types.map((toType) => `${fromType}-to-${toType}`)
 );
-no
+
 export async function generateTags() {
   const { data: models, error: fetchError } = await supabase
     .from("replicateModelsData")
