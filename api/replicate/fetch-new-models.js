@@ -1,13 +1,13 @@
 import { createClient } from "@supabase/supabase-js";
 import dotenv from "dotenv";
 import axios from "axios";
-import cheerio from "cheerio";
 
 dotenv.config();
 
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
 const supabase = createClient(supabaseUrl, supabaseKey);
+const replicateApiKey = process.env.REPLICATE_API_KEY;
 
 function formatDate(date) {
   const day = date.getDate();
@@ -16,90 +16,106 @@ function formatDate(date) {
   return `${month}/${day}/${year}`;
 }
 
-async function checkAndUpsertModel(creator, modelName) {
+async function checkAndUpsertModel(data) {
   const currentDate = new Date();
   const lastUpdated = formatDate(currentDate);
 
-  const { data: existingModels, error: fetchError } = await supabase
+  const { data: existingModel, error: selectError } = await supabase
     .from("replicateModelsData")
-    .select("creator, modelName, id")
-    .eq("creator", creator)
-    .eq("modelName", modelName);
+    .select("id")
+    .eq("creator", data.owner)
+    .eq("modelName", data.name)
+    .single();
 
-  if (fetchError) {
-    console.error(fetchError);
-    return;
-  }
-
-  if (existingModels && existingModels.length > 0) {
-    console.log(
-      `Model ${creator}/${modelName} already exists, skipping insertion.`
-    );
-    return;
-  }
-
-  const modelUrl = `https://replicate.ai/${creator}/${modelName}`;
-
-  const { error: upsertError } = await supabase
-    .from("replicateModelsData")
-    .upsert([
-      {
-        creator: creator,
-        modelName: modelName,
-        tags: "",
-        runs: 0,
-        lastUpdated: lastUpdated,
-        platform: "replicate",
-        description: "",
-        demoSources: [],
-        modelUrl: modelUrl,
-        indexedDate: lastUpdated,
-      },
-    ]);
-
-  if (upsertError) {
+  if (selectError && selectError.code !== "PGRST116") {
     console.error(
-      `Failed to upsert model ${creator}/${modelName}:`,
-      upsertError
+      `Failed to check existing model ${data.owner}/${data.name}:`,
+      selectError
     );
+    return;
+  }
+
+  if (existingModel) {
+    const { error: updateError } = await supabase
+      .from("replicateModelsData")
+      .update({
+        tags: "",
+        runs: data.run_count,
+        lastUpdated: lastUpdated,
+        description: data.description,
+        demoSources: [],
+        modelUrl: data.url,
+        githubUrl: data.github_url,
+        paperUrl: data.paper_url,
+        licenseUrl: data.license_url,
+        indexedDate: lastUpdated,
+      })
+      .eq("id", existingModel.id);
+
+    if (updateError) {
+      console.error(
+        `Failed to update model ${data.owner}/${data.name}:`,
+        updateError
+      );
+    } else {
+      console.log(`Updated model ${data.owner}/${data.name}`);
+    }
   } else {
-    console.log(`Upserted model ${creator}/${modelName}`);
+    const { error: insertError } = await supabase
+      .from("replicateModelsData")
+      .insert([
+        {
+          creator: data.owner,
+          modelName: data.name,
+          tags: "",
+          runs: data.run_count,
+          lastUpdated: lastUpdated,
+          platform: "replicate",
+          description: data.description,
+          demoSources: [],
+          example: data.cover_image_url,
+          modelUrl: data.url,
+          githubUrl: data.github_url,
+          paperUrl: data.paper_url,
+          licenseUrl: data.license_url,
+          indexedDate: lastUpdated,
+        },
+      ]);
+
+    if (insertError) {
+      console.error(
+        `Failed to insert model ${data.owner}/${data.name}:`,
+        insertError
+      );
+    } else {
+      console.log(`Inserted model ${data.owner}/${data.name}`);
+    }
   }
 }
 
-async function fetchNewModels() {
-  let pageNumber = 1;
-  while (true) {
-    try {
-      const response = await axios.get(
-        `https://replicate.ai/explore?latest_models_page=${pageNumber}#latest-models`
-      );
-      const html = response.data;
-      const $ = cheerio.load(html);
-      const modelElements = $("h4.mb-1.overflow-hidden.overflow-ellipsis");
+export async function fetchNewModels() {
+  let nextURL = "https://api.replicate.com/v1/models";
 
-      modelElements.each((index, element) => {
-        const creator = $(element)
-          .find("span.text-shade")
-          .first()
-          .text()
-          .trim();
-        const modelName = $(element)
-          .find("a.no-default")
-          .text()
-          .replace(`${creator}/`, "")
-          .trim();
-        checkAndUpsertModel(creator, modelName);
+  while (nextURL) {
+    try {
+      const response = await axios.get(nextURL, {
+        headers: {
+          Authorization: `Token ${replicateApiKey}`,
+        },
       });
 
-      const nextPageElement = $('a[rel="next"]');
-      if (nextPageElement.length > 0) {
-        pageNumber += 1;
-      } else {
-        break;
+      const models = response.data.results;
+      for (const model of models) {
+        await checkAndUpsertModel(model);
       }
+
+      // Update the nextURL if "next" is present in the response for pagination
+      nextURL = response.data.next;
     } catch (error) {
-      console.error("Failed to fetch new models. Error:", error.message);
+      console.error(
+        "Failed to fetch new models from API. Error:",
+        error.message
+      );
       break;
     }
   }

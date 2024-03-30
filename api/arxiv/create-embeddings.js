@@ -19,12 +19,9 @@ export async function createEmbeddings() {
 
   while (hasMoreData) {
     const { data: rows, error: fetchError } = await supabase
-      .from("replicateModelsData")
-      .select(
-        "creator, modelName, generatedSummary, generatedUseCase, description, tags, id"
-      )
+      .from("arxivPapersData")
+      .select("*") // Select all columns including the id
       .is("embedding", null)
-      .gt("runs", 10)
       .range(start, start + limit - 1);
 
     if (fetchError) {
@@ -33,39 +30,46 @@ export async function createEmbeddings() {
     }
 
     if (rows.length === 0) {
-      console.log("No models without embeddings were found");
+      console.log("No papers without embeddings were found");
       hasMoreData = false;
     } else {
-      console.log(`Processing models ${start + 1} to ${start + rows.length}`);
-
+      console.log(`Processing papers ${start + 1} to ${start + rows.length}`);
       for (const row of rows) {
         const {
-          creator,
-          modelName,
+          id,
+          title,
+          arxivCategories,
+          abstract,
+          authors,
+          paperUrl,
+          pdfUrl,
+          lastUpdated,
+          indexedDate,
+          publishedDate,
+          arxivId,
           generatedSummary,
           generatedUseCase,
-          description,
-          tags,
-          id,
+          thumbnail,
         } = row;
 
-        const inputText = `${creator || ""} ${modelName || ""} ${
+        const inputText = `${title || ""} ${arxivCategories || ""} ${
+          abstract || ""
+        } ${authors || ""} ${paperUrl || ""} ${pdfUrl || ""} ${
+          lastUpdated || ""
+        } ${indexedDate || ""} ${publishedDate || ""} ${arxivId || ""} ${
           generatedSummary || ""
-        } ${generatedUseCase || ""} ${description || ""} ${tags || ""}`;
-        console.log(inputText);
+        } ${generatedUseCase || ""} ${thumbnail || ""}`;
+
         try {
           const embeddingResponse = await openAi.createEmbedding({
             model: "text-embedding-ada-002",
             input: inputText,
           });
-
           const [{ embedding }] = embeddingResponse.data.data;
-
           await supabase
-            .from("replicateModelsData")
+            .from("arxivPapersData")
             .update({ embedding: embedding })
             .eq("id", id);
-
           console.log(`Embedding created and inserted for row with id: ${id}`);
         } catch (error) {
           console.error(
@@ -74,12 +78,10 @@ export async function createEmbeddings() {
           );
         }
       }
-
       start += limit;
-      console.log(`Processed models up to ${start}`);
+      console.log(`Processed papers up to ${start}`);
     }
   }
-
   console.log("Job completed");
 }
 
