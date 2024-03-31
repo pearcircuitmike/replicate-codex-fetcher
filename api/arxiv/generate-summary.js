@@ -124,7 +124,7 @@ async function generateSummaryMarkdown(h2s, abstract) {
             textContent = "";
           }
           summaryMarkdown += `![${item.caption}](${item.source})\n\n`;
-          summaryMarkdown += item.caption ? `${item.caption}\n\n` : "\n"; // Add caption as plain text below the image
+          summaryMarkdown += item.caption ? `*${item.caption}*\n\n` : "\n"; // Add caption as plain text below the image
         }
       }
 
