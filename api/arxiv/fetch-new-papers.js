@@ -2,6 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import dotenv from "dotenv";
 import axios from "axios";
 import Parser from "rss-parser";
+import slugify from "slugify";
 
 dotenv.config();
 
@@ -12,6 +13,27 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 const rssParser = new Parser();
 
 const categories = ["cs", "eess"];
+
+const allowedCategories = [
+  "cs.AI",
+  "cs.CL",
+  "cs.CV",
+  "cs.CY",
+  "cs.DC",
+  "cs.ET",
+  "cs.HC",
+  "cs.IR",
+  "cs.LG",
+  "cs.MA",
+  "cs.MM",
+  "cs.NE",
+  "cs.RO",
+  "cs.SD",
+  "cs.NI",
+  "eess.AS",
+  "eess.IV",
+  "stat.ML",
+];
 
 function formatDate(date) {
   const day = date.getDate();
@@ -33,14 +55,39 @@ function generatePdfUrl(arxivId) {
   return `https://arxiv.org/pdf/${arxivId}.pdf`;
 }
 
-async function checkAndUpsertPaper(data, arxivCategories) {
+function generateSlug(title) {
+  const articleRegex = /\b(a|an|the|of|for|in|on|and|with)\b/gi;
+  const slug = slugify(title, {
+    lower: true,
+    strict: true,
+    remove: /[*+~.()'"!:@]/g,
+  })
+    .replace(articleRegex, "")
+    .replace(/[-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return slug.split("-").slice(0, 7).join("-");
+}
+async function checkAndUpsertPaper(data, arxivCategories, pubDate) {
   const currentDate = new Date();
   const lastUpdated = formatDate(currentDate);
-  const publishedDate = new Date(data.pubDate);
+  const publishedDate = pubDate;
   const arxivId = extractArxivId(data.link);
 
   if (!arxivId) {
     console.error(`Failed to extract arxivId from URL: ${data.link}`);
+    return;
+  }
+
+  // Check if the paper has at least one of the allowed categories
+  const hasAllowedCategory = arxivCategories.some((category) =>
+    allowedCategories.includes(category)
+  );
+  if (!hasAllowedCategory) {
+    console.log(
+      `Skipping paper "${sanitizeValue(
+        data.title
+      )}" as it does not have any of the allowed categories.`
+    );
     return;
   }
 
@@ -65,6 +112,7 @@ async function checkAndUpsertPaper(data, arxivCategories) {
     ? data.creator.split(", ").map(sanitizeValue)
     : [];
   const pdfUrl = generatePdfUrl(arxivId);
+  const slug = generateSlug(data.title);
 
   if (existingPaper) {
     const { error: updateError } = await supabase
@@ -78,6 +126,7 @@ async function checkAndUpsertPaper(data, arxivCategories) {
         publishedDate: publishedDate,
         indexedDate: lastUpdated,
         arxivCategories: arxivCategories.map(sanitizeValue),
+        slug: slug,
       })
       .eq("id", existingPaper.id);
 
@@ -104,6 +153,7 @@ async function checkAndUpsertPaper(data, arxivCategories) {
           lastUpdated: lastUpdated,
           indexedDate: lastUpdated,
           arxivId: arxivId,
+          slug: slug,
         },
       ]);
 
@@ -126,12 +176,17 @@ async function fetchPapersFromRSS(category) {
     );
     console.log(`Found ${feed.items.length} papers in category "${category}"`);
 
+    const pubDate = new Date(feed.pubDate); // Parse the pubDate from the feed
+
     for (const item of feed.items) {
       const arxivCategories = item.categories.filter(
-        (cat) => cat.startsWith("cs") || cat.startsWith("eess")
+        (cat) =>
+          cat.startsWith("cs") ||
+          cat.startsWith("eess") ||
+          cat.startsWith("stat.ML")
       );
       if (arxivCategories.length > 0) {
-        await checkAndUpsertPaper(item, arxivCategories);
+        await checkAndUpsertPaper(item, arxivCategories, pubDate); // Pass the pubDate to the function
       }
     }
 
