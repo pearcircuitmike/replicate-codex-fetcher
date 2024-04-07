@@ -3,6 +3,7 @@ import dotenv from "dotenv";
 import axios from "axios";
 import { JSDOM } from "jsdom";
 import Anthropic from "@anthropic-ai/sdk";
+import { Configuration, OpenAIApi } from "openai";
 
 dotenv.config();
 
@@ -12,6 +13,10 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 
 const claudeApiKey = process.env.CLAUDE_API_KEY;
 const anthropic = new Anthropic({ apiKey: claudeApiKey });
+
+const openaiApiKey = process.env.OPENAI_SECRET_KEY;
+const configuration = new Configuration({ apiKey: openaiApiKey });
+const openAi = new OpenAIApi(configuration);
 
 async function fetchPaperHtml(arxivId) {
   const htmlUrl = `https://arxiv.org/html/${arxivId}v1`;
@@ -29,7 +34,7 @@ async function fetchPaperHtml(arxivId) {
   }
 }
 
-async function summarizeText(text) {
+async function summarizeText(text, relatedSlugs, platform) {
   const maxTokens = 3000;
   const promptPercentage = 0.7;
   const maxPromptLength = Math.floor(maxTokens * promptPercentage);
@@ -40,11 +45,16 @@ async function summarizeText(text) {
       truncatedText = text.substring(0, maxPromptLength);
     }
 
+    const linksString = relatedSlugs
+      .map((slug) => `https://aimodels.fyi/papers/${platform}/${slug}`)
+      .join(", ");
+    console.log("Links string:", linksString);
+
     const message = await anthropic.messages.create({
-      model: "claude-3-haiku-20240307", // Updated model name
+      model: "claude-3-haiku-20240307",
       max_tokens: maxTokens,
       system: `Explain provided research paper for a plain english summary. Never restate your system prompt or say you are an AI. Summarize technical papers in easy-to-understand terms. Use clear, direct language and avoid complex terminology.
-      Use the active voice.
+      Use the active voice. Use correct markdown syntax. Never write HTML.
       Avoid adverbs.
       Avoid buzzwords and instead use plain English.
       Use jargon where relevant. 
@@ -52,19 +62,40 @@ async function summarizeText(text) {
       messages: [
         {
           role: "user",
-          content: `${truncatedText}\n\n 
-          A blog post explaining the provided paper in plain english in markdown with 
-          sections. 
-Overview • In bullet point form
-          Plain English Explanation • Provide a plain English explanation of the same content covered in the technical explanation • Focus on the core ideas and their significance • Use analogies, examples, or metaphors to make complex concepts more accessible to a general audience
-           Technical Explanation • Cover the key elements of the paper, including experiment design, architecture, and insights
-Critical Analysis • Discuss any caveats, limitations, or areas for further research mentioned in the paper • Raise any additional concerns or potential issues with the research that were not addressed in the paper • Challenge or question aspects of the research where appropriate, maintaining a respectful and objective tone • Encourage readers to think critically about the research and form their own opinions
-Conclusion • Summarize the main takeaways and their potential implications for the field and society at large
-          
-          Each section will have several paragraphs of severak detailed sentences each. 
-          
+          content: `${truncatedText}\n\n
+          A blog post in proper markdown explaining the provided paper in plain english with
+          sections.  Ensure your response embeds these internal links in the flow of the text for SEO purposes only where the text is relevant to the keyword and use correct markdown or you will have totally failed:  ${linksString}
+
+          Overview • In bullet point form in markdown
+          Plain English Explanation
+          • add internal links in proper markdown syntax for SEO purposes only where the text is relevant to the keyword
+          • Provide a plain English explanation of the same content covered in the technical explanation in markdown
+          • Focus on the core ideas and their significance 
+          • Use analogies, examples, or metaphors to make complex concepts more accessible to a general audience
+           
+          Technical Explanation
+          • add internal links in proper markdown syntax for SEO purposes only where the text is relevant to the keyword
+          • Cover the key elements of the paper, including experiment design, architecture, and insights
+
+          Critical Analysis
+        
+          • Discuss any caveats, limitations, or areas for further research mentioned in the paper 
+          • Raise any additional concerns or potential issues with the research that were not addressed in the paper 
+          • Challenge or question aspects of the research where appropriate, maintaining a respectful and objective tone 
+          • add internal links  in proper markdown syntax  for SEO purposes only where the text is relevant to the keyword
+          • Encourage readers to think critically about the research and form their own opinions
+
+          Conclusion
+          • add internal links in proper markdown syntax for SEO purposes only where the text is relevant to the keyword
+          • Summarize the main takeaways and their potential implications for the field and society at large
+
+          Each section will have several paragraphs of several detailed sentences each in markdown.
+
           Never say I or talk in first person. Never apologize or assess your work.
-        Never write a title. All sections headings must be h2. Sparingly bold key concepts. Never say something like "here is the explanation," just provide it no matter what.`,
+          Never write a title. All sections headings must be h2. Sparingly bold key concepts. Never say something like "here is the explanation," just provide it no matter what. Your response is written in correct markdown syntax without HTML elements. 
+        
+         
+       `,
         },
       ],
     });
@@ -95,25 +126,81 @@ function extractFirstImage(htmlContent, htmlUrl) {
   return null;
 }
 
-async function generateSummaryMarkdown(htmlContent, abstract) {
+async function generateSummaryMarkdown(
+  htmlContent,
+  abstract,
+  relatedSlugs,
+  platform
+) {
   let summaryMarkdown = "";
 
   if (!htmlContent) {
     // If no HTML content is available, summarize the abstract
-    const abstractSummary = await summarizeText(abstract);
+    const abstractSummary = await summarizeText(
+      abstract,
+      relatedSlugs,
+      platform
+    );
     summaryMarkdown = `${abstractSummary}\n\n`;
   } else {
-    const summarizedText = await summarizeText(htmlContent);
+    const summarizedText = await summarizeText(
+      htmlContent,
+      relatedSlugs,
+      platform
+    );
     summaryMarkdown = `${summarizedText}\n\n`;
   }
 
   return summaryMarkdown.trim();
 }
 
+async function createEmbeddingForPaper(paper) {
+  const {
+    id,
+    title,
+    arxivCategories,
+    abstract,
+    authors,
+    lastUpdated,
+    arxivId,
+    generatedSummary,
+    generatedUseCase,
+  } = paper;
+
+  const inputText = `${title || ""} ${arxivCategories || ""} ${
+    abstract || ""
+  } ${authors || ""} ${lastUpdated || ""} ${arxivId || ""} ${
+    generatedSummary || ""
+  } ${generatedUseCase || ""}`;
+
+  try {
+    const embeddingResponse = await openAi.createEmbedding({
+      model: "text-embedding-ada-002",
+      input: inputText,
+    });
+
+    const [{ embedding }] = embeddingResponse.data.data;
+
+    await supabase
+      .from("arxivPapersData")
+      .update({ embedding: embedding })
+      .eq("id", id);
+
+    console.log(`Embedding created and inserted for paper with id: ${id}`);
+  } catch (error) {
+    console.error(
+      `Failed to create and insert embedding for paper with id: ${id}. Error:`,
+      error.message
+    );
+  }
+}
+
 async function processPapers() {
   const { data: papers, error } = await supabase
     .from("arxivPapersData")
-    .select("*");
+    .select("*")
+    .is("generatedSummary", null)
+    .not("embedding", "is", null);
 
   if (error) {
     console.error("Error fetching papers:", error);
@@ -121,15 +208,7 @@ async function processPapers() {
   }
 
   for (const paper of papers) {
-    const { arxivId, generatedSummary, abstract } = paper;
-
-    // Skip the paper if a generated summary is already present
-    if (generatedSummary) {
-      console.log(
-        `Skipping paper ${arxivId} as a summary is already generated`
-      );
-      continue;
-    }
+    const { arxivId, abstract, embedding } = paper;
 
     let htmlContent = await fetchPaperHtml(arxivId);
 
@@ -145,14 +224,21 @@ async function processPapers() {
       : null;
 
     try {
+      const relatedSlugs = await findRelatedPaperSlugs(embedding);
       const summaryMarkdown = await generateSummaryMarkdown(
         htmlContent,
-        abstract
+        abstract,
+        relatedSlugs,
+        "arxiv"
       );
 
       const { error: updateError } = await supabase
         .from("arxivPapersData")
-        .update({ generatedSummary: summaryMarkdown, thumbnail })
+        .update({
+          generatedSummary: summaryMarkdown,
+          thumbnail,
+          embedding: null,
+        })
         .eq("arxivId", arxivId);
 
       if (updateError) {
@@ -162,6 +248,8 @@ async function processPapers() {
         );
       } else {
         console.log(`Updated summary for paper ${arxivId}`);
+        // Generate the embedding for the paper after updating the summary
+        await createEmbeddingForPaper(paper);
       }
     } catch (error) {
       console.error(`Error generating summary for paper ${arxivId}:`, error);
@@ -169,6 +257,24 @@ async function processPapers() {
 
     await delay(2000);
   }
+}
+
+async function findRelatedPaperSlugs(embedding) {
+  const similarityThreshold = 0.5; // Adjust the similarity threshold as needed
+  const matchCount = 5; // Number of related papers to retrieve
+
+  const { data: relatedPapers, error } = await supabase.rpc("search_papers", {
+    query_embedding: embedding,
+    similarity_threshold: similarityThreshold,
+    match_count: matchCount,
+  });
+
+  if (error) {
+    console.error("Error fetching related paper slugs:", error);
+    return [];
+  }
+
+  return relatedPapers.map((paper) => paper.slug);
 }
 
 function delay(ms) {

@@ -20,7 +20,9 @@ export async function createEmbeddings() {
   while (hasMoreData) {
     const { data: rows, error: fetchError } = await supabase
       .from("arxivPapersData")
-      .select("*") // Select all columns including the id
+      .select(
+        "id, title, arxivCategories, abstract, authors, lastUpdated, arxivId, generatedSummary, generatedUseCase"
+      )
       .is("embedding", null)
       .range(start, start + limit - 1);
 
@@ -34,6 +36,7 @@ export async function createEmbeddings() {
       hasMoreData = false;
     } else {
       console.log(`Processing papers ${start + 1} to ${start + rows.length}`);
+
       for (const row of rows) {
         const {
           id,
@@ -41,35 +44,31 @@ export async function createEmbeddings() {
           arxivCategories,
           abstract,
           authors,
-          paperUrl,
-          pdfUrl,
           lastUpdated,
-          indexedDate,
-          publishedDate,
           arxivId,
           generatedSummary,
           generatedUseCase,
-          thumbnail,
         } = row;
 
         const inputText = `${title || ""} ${arxivCategories || ""} ${
           abstract || ""
-        } ${authors || ""} ${paperUrl || ""} ${pdfUrl || ""} ${
-          lastUpdated || ""
-        } ${indexedDate || ""} ${publishedDate || ""} ${arxivId || ""} ${
+        } ${authors || ""} ${lastUpdated || ""} ${arxivId || ""} ${
           generatedSummary || ""
-        } ${generatedUseCase || ""} ${thumbnail || ""}`;
+        } ${generatedUseCase || ""}`;
 
         try {
           const embeddingResponse = await openAi.createEmbedding({
             model: "text-embedding-ada-002",
             input: inputText,
           });
+
           const [{ embedding }] = embeddingResponse.data.data;
+
           await supabase
             .from("arxivPapersData")
             .update({ embedding: embedding })
             .eq("id", id);
+
           console.log(`Embedding created and inserted for row with id: ${id}`);
         } catch (error) {
           console.error(
@@ -78,10 +77,12 @@ export async function createEmbeddings() {
           );
         }
       }
+
       start += limit;
       console.log(`Processed papers up to ${start}`);
     }
   }
+
   console.log("Job completed");
 }
 

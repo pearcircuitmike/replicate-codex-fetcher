@@ -154,6 +154,7 @@ async function checkAndUpsertPaper(data, arxivCategories, pubDate) {
           indexedDate: lastUpdated,
           arxivId: arxivId,
           slug: slug,
+          platform: "arxiv",
         },
       ]);
 
