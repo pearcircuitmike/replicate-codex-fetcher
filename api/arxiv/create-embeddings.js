@@ -78,6 +78,8 @@ export async function createEmbeddings() {
         }
       }
 
+      // After processing the batch, help the garbage collector by clearing large objects
+      rows.length = 0; // Clear the array to free up memory
       start += limit;
       console.log(`Processed papers up to ${start}`);
     }
