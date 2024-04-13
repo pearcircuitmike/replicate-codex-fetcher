@@ -19,12 +19,12 @@ export async function createEmbeddings() {
 
   while (hasMoreData) {
     const { data: rows, error: fetchError } = await supabase
-      .from("replicateModelsData")
+      .from("replicateModelsData_NEW")
       .select(
-        "creator, modelName, generatedSummary, generatedUseCase, description, tags, id"
+        "creator, modelName, generatedSummary, generatedUseCase, description, tags, id, lastUpdated"
       )
       .is("embedding", null)
-      .gt("runs", 10)
+
       .range(start, start + limit - 1);
 
     if (fetchError) {
@@ -47,12 +47,15 @@ export async function createEmbeddings() {
           description,
           tags,
           id,
+          lastUpdated,
         } = row;
 
         const inputText = `${creator || ""} ${modelName || ""} ${
           generatedSummary || ""
         } ${generatedUseCase || ""} ${description || ""} ${tags || ""}`;
+
         console.log(inputText);
+
         try {
           const embeddingResponse = await openAi.createEmbedding({
             model: "text-embedding-ada-002",
@@ -62,8 +65,11 @@ export async function createEmbeddings() {
           const [{ embedding }] = embeddingResponse.data.data;
 
           await supabase
-            .from("replicateModelsData")
-            .update({ embedding: embedding })
+            .from("replicateModelsData_NEW")
+            .update({
+              embedding: embedding,
+              lastUpdated: new Date().toISOString(),
+            })
             .eq("id", id);
 
           console.log(`Embedding created and inserted for row with id: ${id}`);

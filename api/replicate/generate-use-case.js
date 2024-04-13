@@ -43,7 +43,7 @@ export async function generateUseCase() {
 
   while (hasMoreData) {
     const { data: models, error: fetchError } = await supabase
-      .from("replicateModelsData")
+      .from("replicateModelsData_NEW")
       .select("id, description, modelName, creator, tags, modelUrl")
       .or("generatedUseCase.is.null,generatedUseCase.eq.''")
       .not("description", "eq", null)
@@ -120,7 +120,7 @@ export async function generateUseCase() {
         )}`;
 
         const { error: updateError } = await supabase
-          .from("replicateModelsData")
+          .from("replicateModelsData_NEW")
           .update({
             generatedUseCase,
             lastUpdated: formattedDate,

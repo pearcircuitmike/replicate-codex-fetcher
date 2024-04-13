@@ -27,7 +27,7 @@ const classificationCategories = types.flatMap((fromType) =>
 
 export async function generateTags() {
   const { data: models, error: fetchError } = await supabase
-    .from("replicateModelsData")
+    .from("replicateModelsData_NEW")
     .select("*")
     .or("tags.eq.,tags.is.null");
 
@@ -122,7 +122,7 @@ export async function generateTags() {
 
       if (classificationCategories.includes(category)) {
         const { error: updateError } = await supabase
-          .from("replicateModelsData")
+          .from("replicateModelsData_NEW")
           .update({ tags: category })
           .match({ id: model.id });
 

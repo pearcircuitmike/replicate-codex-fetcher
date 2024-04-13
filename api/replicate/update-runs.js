@@ -23,7 +23,7 @@ async function updateExistingModel(data) {
   console.log(`Checking model: ${data.owner}/${data.name}`);
 
   const { data: existingModels, error: fetchError } = await supabase
-    .from("replicateModelsData")
+    .from("replicateModelsData_NEW")
     .select("id")
     .eq("creator", data.owner)
     .eq("modelName", data.name);
@@ -36,7 +36,7 @@ async function updateExistingModel(data) {
   if (existingModels && existingModels.length > 0) {
     console.log(`Found existing model: ${data.owner}/${data.name}`);
     const { error: updateError } = await supabase
-      .from("replicateModelsData")
+      .from("replicateModelsData_NEW")
       .update({
         lastUpdated: lastUpdated,
         licenseUrl: data.license_url,
