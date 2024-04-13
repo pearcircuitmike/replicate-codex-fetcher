@@ -146,7 +146,7 @@ async function updateRedditScore() {
         );
         const { error: updateError } = await supabase
           .from("arxivPapersData")
-          .update({ redditScore })
+          .update({ redditScore, lastUpdated: new Date().toISOString() })
           .eq("id", id);
 
         if (updateError) {

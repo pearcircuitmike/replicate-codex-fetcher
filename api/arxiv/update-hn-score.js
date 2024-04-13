@@ -66,7 +66,7 @@ async function updateHackerNewsScore() {
 
         const { error: updateError } = await supabase
           .from("arxivPapersData")
-          .update({ hackerNewsScore })
+          .update({ hackerNewsScore, lastUpdated: new Date().toISOString() })
           .eq("id", id);
 
         if (updateError) {

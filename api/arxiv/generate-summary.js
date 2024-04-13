@@ -238,6 +238,7 @@ async function processPapers() {
           generatedSummary: summaryMarkdown,
           thumbnail,
           embedding: null,
+          lastUpdated: new Date().toISOString(),
         })
         .eq("arxivId", arxivId);
 

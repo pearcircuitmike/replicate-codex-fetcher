@@ -69,8 +69,8 @@ function generateSlug(title) {
 }
 async function checkAndUpsertPaper(data, arxivCategories, pubDate) {
   const currentDate = new Date();
-  const lastUpdated = formatDate(currentDate);
-  const publishedDate = pubDate;
+  const lastUpdated = currentDate.toISOString();
+  const publishedDate = pubDate.toISOString();
   const arxivId = extractArxivId(data.link);
 
   if (!arxivId) {
