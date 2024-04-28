@@ -19,8 +19,7 @@ export async function generateTags() {
   const { data: models, error: fetchError } = await supabase
     .from("modelsData")
     .select("*")
-    .eq("platform", "replicate")
-
+    .eq("platform", "huggingFace")
     .or("tags.eq.,tags.is.null");
 
   console.log(models);
@@ -30,48 +29,26 @@ export async function generateTags() {
     return;
   }
 
+  const maxPromptLength = 2000; // Adjust the maximum prompt length as needed
+
   for (const model of models) {
-    const modelUrl = `https://api.replicate.com/v1/models/${model.creator}/${model.modelName}`;
-    const modelResponse = await fetch(modelUrl, {
-      headers: {
-        Authorization: `Token ${process.env.REPLICATE_API_KEY}`,
-      },
-    });
-    const modelData = await modelResponse.json();
-    const versionId = modelData.latest_version?.id;
-
-    const versionUrl = `https://api.replicate.com/v1/models/${model.creator}/${model.modelName}/versions/${versionId}`;
-    const response = await fetch(versionUrl, {
-      headers: {
-        Authorization: `Token ${process.env.REPLICATE_API_KEY}`,
-      },
-    });
-    const responseData = await response.json();
-
-    const openAPIInputSchema = responseData.openapi_schema?.components?.schemas
-      ?.Input.properties
-      ? JSON.stringify(
-          responseData.openapi_schema.components.schemas.Input.properties
-        )
-      : "";
-    const openAPIOutputSchema = responseData.openapi_schema?.components?.schemas
-      ?.Output
-      ? JSON.stringify(responseData.openapi_schema.components.schemas.Output)
-      : "";
-
-    console.log(openAPIInputSchema);
-
     const description = model.description ?? "No description provided.";
+
+    const truncatedDescription =
+      description && description.length > maxPromptLength
+        ? description.substring(0, maxPromptLength)
+        : description || "";
+
     const prompt = `
     <task>
-    Classify the following model into one of the specified categories based on the inputs and outputs. 
+    Classify the following model into one of the specified categories based on the description. 
     You must respond exactly with the category and no other words. 
     For example, you can respond "Image-to-Image", "Text-to-Image", etc - you SHOULD NOT REPLY WITH ANYTHING ELSE.
     </task>
     
     <rules>
     - Response must be of the form: Input-to-Output
-    - You must first read the description. If the answer is in the description, provide it. Otherwise use the schema to determine it.
+    - You must read the description and determine the category based on the information provided.
     </rules>
     
     <categories>
@@ -82,11 +59,7 @@ export async function generateTags() {
     
     <model>${model.modelName}</model>
     
-    <description>${description}</description>
-    
-    <inputSchema>${openAPIInputSchema}</inputSchema>
-    
-    <outputSchema>${openAPIOutputSchema}</outputSchema>
+    <description>${truncatedDescription}</description>
     
     <category>`;
 

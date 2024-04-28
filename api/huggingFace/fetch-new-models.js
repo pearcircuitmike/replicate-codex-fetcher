@@ -1,7 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import dotenv from "dotenv";
-import { Configuration } from "openai";
-import LinkHeader from "http-link-header"; // Add this line
+import LinkHeader from "http-link-header";
+import slugify from "slugify";
 
 dotenv.config();
 
@@ -9,18 +9,22 @@ const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-const configuration = new Configuration({
-  apiKey: process.env.OPENAI_SECRET_KEY,
-});
+function generateSlug(creator, modelName) {
+  const slugifiedCreator = slugify(creator, { lower: true, strict: true });
+  const slugifiedModelName = slugify(modelName, { lower: true, strict: true });
+  return `${slugifiedModelName}-${slugifiedCreator}`;
+}
 
 async function fetchModelData(url) {
-  const modelsResponse = await fetch(url);
+  const modelsResponse = await fetch(url, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${process.env.HUGGINGFACE_API_TOKEN}`,
+    },
+  });
   const linkHeader = modelsResponse.headers.get("Link");
   const modelsData = await modelsResponse.json();
-
   let nextUrl = null;
-
-  // Check if Link header exists
   if (linkHeader) {
     const link = LinkHeader.parse(linkHeader);
     const nextLink = link.get("rel", "next");
@@ -28,70 +32,58 @@ async function fetchModelData(url) {
       nextUrl = nextLink[0].uri;
     }
   }
-
   return { modelsData, nextUrl };
 }
 
 export async function fetchNewModels() {
-  let huggingFaceBaseUrl = "https://huggingface.co/api/models";
+  let huggingFaceBaseUrl =
+    "https://huggingface.co/api/models?sort=likes&limit=5&full=true&config=true";
   while (huggingFaceBaseUrl) {
     const { modelsData, nextUrl } = await fetchModelData(huggingFaceBaseUrl);
     huggingFaceBaseUrl = nextUrl;
-    const currentDate = new Date();
-    const formattedDate = `${
-      currentDate.getMonth() + 1
-    }/${currentDate.getDate()}/${String(currentDate.getFullYear()).slice(-2)}`; // M/DD/YY
-
     for (const modelData of modelsData) {
-      let [creator, modelName] = modelData.id.split("/");
-      if (!modelName) {
-        modelName = creator;
-        creator = "huggingface";
+      if (modelData.likes < 5) {
+        console.log(
+          "Reached a model with less than 5 likes, finishing the script."
+        );
+        return;
       }
+      const parts = modelData.id.split("/");
+      const creator = parts.length > 1 ? parts[0] : "HuggingFace";
+      const modelName = parts.length > 1 ? parts[1] : modelData.id;
 
       const { data: existingModels, error: fetchError } = await supabase
-        .from("huggingFaceModelsData")
+        .from("modelsData")
         .select("creator, modelName, id")
         .eq("creator", creator)
         .eq("modelName", modelName);
-
       if (fetchError) {
         console.error(fetchError);
         return;
       }
-
       if (existingModels.length > 0) {
         console.log(
           `Existing model already exists for ${creator}/${modelName}, skipping insertion`
         );
-        continue; // Skip to next iteration if a model already exists
+        continue;
       }
+      const tags = modelData.pipeline_tag;
+      const huggingFaceScore = modelData.likes;
+      const modelUrl = `https://huggingface.co/${modelData.id}`;
+      const slug = generateSlug(creator, modelName);
 
-      const tags = modelData.pipeline_tag; // Use the pipeline_tag as the tag
-      const runs = modelData.downloads;
-
-      const modelUrl =
-        creator === "huggingface"
-          ? `https://huggingface.co/api/models/${modelName}`
-          : `https://huggingface.co/api/models/${creator}/${modelName}`;
-
-      const { error: upsertError } = await supabase
-        .from("huggingFaceModelsData")
-        .upsert([
-          {
-            creator: creator,
-            modelName: modelName,
-            tags: "", // tags handled in another script
-            runs: runs,
-            lastUpdated: formattedDate,
-            platform: "huggingFace",
-            description: "", // Leave the description blank
-            demoSources: [], // demosources handled in another script
-            modelUrl: modelUrl,
-            indexedDate: formattedDate, // Set indexedDate to the current date
-          },
-        ]);
-
+      const { error: upsertError } = await supabase.from("modelsData").upsert([
+        {
+          creator: creator,
+          modelName: modelName,
+          huggingFaceScore: huggingFaceScore,
+          lastUpdated: new Date().toISOString(),
+          platform: "huggingFace",
+          modelUrl: modelUrl,
+          indexedDate: new Date().toISOString(),
+          slug: slug || `${modelData.owner}-${modelData.name}`,
+        },
+      ]);
       if (upsertError) {
         console.error(
           `Failed to upsert model ${creator}/${modelName}:`,

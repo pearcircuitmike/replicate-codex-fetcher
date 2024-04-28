@@ -1,12 +1,16 @@
 import { createClient } from "@supabase/supabase-js";
 import dotenv from "dotenv";
-import cheerio from "cheerio";
+import axios from "axios";
+import { JSDOM } from "jsdom";
+import TurndownService from "turndown";
 
 dotenv.config();
 
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
 const supabase = createClient(supabaseUrl, supabaseKey);
+
+const turndownService = new TurndownService();
 
 export async function fetchDescription() {
   let start = 0;
@@ -15,8 +19,9 @@ export async function fetchDescription() {
 
   while (hasMoreData) {
     const { data: models, error: fetchError } = await supabase
-      .from("huggingFaceModelsData")
+      .from("modelsData")
       .select("modelUrl, id")
+      .eq("platform", "huggingFace")
       .or("description.is.null,description.eq.")
       .range(start, start + limit - 1);
 
@@ -35,32 +40,42 @@ export async function fetchDescription() {
         const modelUrl = model.modelUrl;
 
         try {
-          const response = await fetch(modelUrl);
-          const body = await response.text();
-          const $ = cheerio.load(body);
-          let content = "";
+          const response = await axios.get(modelUrl);
+          const dom = new JSDOM(response.data);
 
-          $(".prose.pl-6.-ml-6.hf-sanitized")
-            .children("p, h1, h2, h3, ul, li, ol")
-            .each(function () {
-              content += $(this).text() + "\n\n";
-            });
+          const descriptionElement = dom.window.document.evaluate(
+            "/html/body/div[1]/main/div[2]/section[1]/div[3]/div[3]",
+            dom.window.document,
+            null,
+            dom.window.XPathResult.FIRST_ORDERED_NODE_TYPE,
+            null
+          ).singleNodeValue;
+
+          let content = "";
+          if (descriptionElement) {
+            const descriptionHtml = descriptionElement.innerHTML.trim();
+            content = turndownService.turndown(descriptionHtml);
+          }
 
           if (content.trim() === "") {
             content = "Platform did not provide a description for this model.";
           }
-          console.log(content);
+
+          // Remove or replace any non-valid characters using a regular expression
+          const sanitizedContent = content.replace(
+            /[^\x09\x0A\x0D\x20-\x7E]/g,
+            ""
+          );
+
+          console.log(sanitizedContent);
 
           const currentDate = new Date();
-          const formattedDate = `${
-            currentDate.getMonth() + 1
-          }/${currentDate.getDate()}/${String(currentDate.getFullYear()).slice(
-            -2
-          )}`; // M/DD/YY
+          const timestamptz = currentDate.toISOString();
 
           const { error: updateError } = await supabase
-            .from("huggingFaceModelsData")
-            .update({ description: content, lastUpdated: formattedDate })
+            .from("modelsData")
+            .update({ description: sanitizedContent, lastUpdated: timestamptz })
+            .eq("platform", "huggingFace")
             .eq("id", model.id);
 
           if (updateError) {

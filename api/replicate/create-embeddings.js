@@ -19,12 +19,12 @@ export async function createEmbeddings() {
 
   while (hasMoreData) {
     const { data: rows, error: fetchError } = await supabase
-      .from("replicateModelsData_NEW")
+      .from("modelsData")
       .select(
-        "creator, modelName, generatedSummary, generatedUseCase, description, tags, id, lastUpdated"
+        "creator, modelName, generatedSummary, description, tags, id, lastUpdated"
       )
+      .eq("platform", "replicate")
       .is("embedding", null)
-
       .range(start, start + limit - 1);
 
     if (fetchError) {
@@ -43,7 +43,6 @@ export async function createEmbeddings() {
           creator,
           modelName,
           generatedSummary,
-          generatedUseCase,
           description,
           tags,
           id,
@@ -52,7 +51,7 @@ export async function createEmbeddings() {
 
         const inputText = `${creator || ""} ${modelName || ""} ${
           generatedSummary || ""
-        } ${generatedUseCase || ""} ${description || ""} ${tags || ""}`;
+        } ${description || ""} ${tags || ""}`;
 
         console.log(inputText);
 
@@ -65,7 +64,7 @@ export async function createEmbeddings() {
           const [{ embedding }] = embeddingResponse.data.data;
 
           await supabase
-            .from("replicateModelsData_NEW")
+            .from("modelsData")
             .update({
               embedding: embedding,
               lastUpdated: new Date().toISOString(),

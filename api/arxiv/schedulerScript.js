@@ -36,7 +36,7 @@ const runScript = (scriptPath) => {
 };
 
 // Schedule the scripts to run Monday, Tuesday, Wednesday, Thursday, and Friday at 8am Eastern Time
-cron.schedule("27 08 * * *", async () => {
+cron.schedule("02 02 * * *", async () => {
   if (isScriptRunning) {
     logWithTimestamp("Scripts are already running. Skipping execution.");
     return;

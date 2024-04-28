@@ -22,10 +22,11 @@ async function checkAndUpsertModel(data) {
   const slug = generateSlug(data.owner, data.name);
 
   const { data: existingModel, error: selectError } = await supabase
-    .from("replicateModelsData_NEW")
+    .from("modelsData")
     .select("id")
     .eq("creator", data.owner)
     .eq("modelName", data.name)
+    .eq("platform", "replicate")
     .single();
 
   if (selectError && selectError.code !== "PGRST116") {
@@ -38,13 +39,13 @@ async function checkAndUpsertModel(data) {
 
   if (existingModel) {
     const { error: updateError } = await supabase
-      .from("replicateModelsData_NEW")
+      .from("modelsData")
       .update({
         tags: "",
         runs: data.run_count,
         lastUpdated: currentDate,
         description: data.description,
-        demoSources: [],
+
         modelUrl: data.url,
         githubUrl: data.github_url,
         paperUrl: data.paper_url,
@@ -52,7 +53,8 @@ async function checkAndUpsertModel(data) {
         indexedDate: currentDate,
         slug: slug,
       })
-      .eq("id", existingModel.id);
+      .eq("id", existingModel.id)
+      .eq("platform", "replicate");
 
     if (updateError) {
       console.error(
@@ -63,27 +65,25 @@ async function checkAndUpsertModel(data) {
       console.log(`Updated model ${data.owner}/${data.name}`);
     }
   } else {
-    const { error: insertError } = await supabase
-      .from("replicateModelsData_NEW")
-      .insert([
-        {
-          creator: data.owner,
-          modelName: data.name,
-          tags: "",
-          runs: data.run_count,
-          lastUpdated: currentDate,
-          platform: "replicate",
-          description: data.description,
-          demoSources: [],
-          example: data.cover_image_url,
-          modelUrl: data.url,
-          githubUrl: data.github_url,
-          paperUrl: data.paper_url,
-          licenseUrl: data.license_url,
-          indexedDate: currentDate,
-          slug: slug || `${data.owner}-${data.name}`, // Fallback to a default slug if it's null or undefined
-        },
-      ]);
+    const { error: insertError } = await supabase.from("modelsData").insert([
+      {
+        creator: data.owner,
+        modelName: data.name,
+        tags: "",
+        runs: data.run_count,
+        lastUpdated: currentDate,
+        platform: "replicate",
+        description: data.description,
+
+        example: data.cover_image_url,
+        modelUrl: data.url,
+        githubUrl: data.github_url,
+        paperUrl: data.paper_url,
+        licenseUrl: data.license_url,
+        indexedDate: currentDate,
+        slug: slug || `${data.owner}-${data.name}`, // Fallback to a default slug if it's null or undefined
+      },
+    ]);
 
     if (insertError) {
       console.error(

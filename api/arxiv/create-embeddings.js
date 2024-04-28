@@ -21,7 +21,7 @@ export async function createEmbeddings() {
     const { data: rows, error: fetchError } = await supabase
       .from("arxivPapersData")
       .select(
-        "id, title, arxivCategories, abstract, authors, lastUpdated, arxivId, generatedSummary, generatedUseCase"
+        "id, title, arxivCategories, abstract, authors, lastUpdated, arxivId, generatedSummary"
       )
       .is("embedding", null)
       .range(start, start + limit - 1);
@@ -47,14 +47,13 @@ export async function createEmbeddings() {
           lastUpdated,
           arxivId,
           generatedSummary,
-          generatedUseCase,
         } = row;
 
         const inputText = `${title || ""} ${arxivCategories || ""} ${
           abstract || ""
         } ${authors || ""} ${lastUpdated || ""} ${arxivId || ""} ${
           generatedSummary || ""
-        } ${generatedUseCase || ""}`;
+        }`;
 
         try {
           const embeddingResponse = await openAi.createEmbedding({

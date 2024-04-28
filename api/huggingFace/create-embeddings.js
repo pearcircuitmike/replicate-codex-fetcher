@@ -19,12 +19,10 @@ async function createEmbeddings() {
 
   while (hasMoreData) {
     const { data: rows, error: fetchError } = await supabase
-      .from("huggingFaceModelsData")
-      .select(
-        "creator, modelName, generatedSummary, generatedUseCase, description, tags, id"
-      )
+      .from("modelsData")
+      .select("creator, modelName, generatedSummary, description, tags, id")
       .is("embedding", null)
-      .gt("runs", 100000)
+      .eq("platform", "huggingFace")
       .range(start, start + limit - 1);
 
     if (fetchError) {
@@ -43,7 +41,7 @@ async function createEmbeddings() {
           creator,
           modelName,
           generatedSummary,
-          generatedUseCase,
+
           description,
           tags,
           id,
@@ -51,7 +49,7 @@ async function createEmbeddings() {
 
         const inputText = `${creator || ""} ${modelName || ""} ${
           generatedSummary || ""
-        } ${generatedUseCase || ""} ${description || ""} ${tags || ""}`;
+        }  ${description || ""} ${tags || ""}`;
         console.log(inputText);
         try {
           const embeddingResponse = await openAi.createEmbedding({
@@ -62,8 +60,10 @@ async function createEmbeddings() {
           const [{ embedding }] = embeddingResponse.data.data;
 
           await supabase
-            .from("huggingFaceModelsData")
+            .from("modelsData")
             .update({ embedding: embedding })
+            .eq("platform", "huggingFace")
+
             .eq("id", id);
 
           console.log(`Embedding created and inserted for row with id: ${id}`);

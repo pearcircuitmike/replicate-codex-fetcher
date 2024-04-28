@@ -92,13 +92,32 @@ async function summarizeText(
 
     if (githubUrl) {
       try {
-        const readmeUrl = githubUrl
+        let readmeUrl = githubUrl
           .replace("https://github.com/", "https://raw.githubusercontent.com/")
           .concat("/main/README.md");
         console.log("Fetching GitHub README from:", readmeUrl);
-        const response = await axios.get(readmeUrl);
-        githubDescription = response.data;
-        console.log("GitHub README content:", githubDescription);
+
+        try {
+          const response = await axios.get(readmeUrl);
+          githubDescription = response.data;
+          console.log("GitHub README content:", githubDescription);
+        } catch (error) {
+          if (error.response && error.response.status === 404) {
+            console.log("README not found at /main/, trying /master/");
+            readmeUrl = githubUrl
+              .replace(
+                "https://github.com/",
+                "https://raw.githubusercontent.com/"
+              )
+              .concat("/master/README.md");
+            console.log("Fetching GitHub README from:", readmeUrl);
+            const response = await axios.get(readmeUrl);
+            githubDescription = response.data;
+            console.log("GitHub README content:", githubDescription);
+          } else {
+            throw error;
+          }
+        }
       } catch (error) {
         console.error("Error fetching README from GitHub:", error);
       }
@@ -258,7 +277,6 @@ async function createEmbeddingForModel(model) {
     indexedDate,
     slug,
     generatedSummary,
-    generatedUseCase,
   } = model;
 
   const inputText = `${creator || ""} ${modelName || ""} ${tags || ""} ${
@@ -267,9 +285,7 @@ async function createEmbeddingForModel(model) {
     example || ""
   } ${modelUrl || ""} ${githubUrl || ""} ${paperUrl || ""} ${
     licenseUrl || ""
-  } ${indexedDate || ""} ${slug || ""} ${generatedSummary || ""} ${
-    generatedUseCase || ""
-  }`;
+  } ${indexedDate || ""} ${slug || ""} ${generatedSummary || ""} `;
 
   try {
     const embeddingResponse = await openAi.createEmbedding({
@@ -280,7 +296,7 @@ async function createEmbeddingForModel(model) {
     const [{ embedding }] = embeddingResponse.data.data;
 
     await supabase
-      .from("replicateModelsData_NEW")
+      .from("modelsData")
       .update({ embedding: embedding })
       .eq("id", id);
 
@@ -293,10 +309,11 @@ async function createEmbeddingForModel(model) {
   }
 }
 
-async function processModels() {
+async function generateSummary() {
   const { data: models, error } = await supabase
-    .from("replicateModelsData_NEW")
+    .from("modelsData")
     .select("*")
+    .eq("platform", "replicate")
     .is("generatedSummary", null)
     .not("embedding", "is", null);
 
@@ -320,7 +337,7 @@ async function processModels() {
 
       if (summaryMarkdown) {
         const { error: updateError } = await supabase
-          .from("replicateModelsData_NEW")
+          .from("modelsData")
           .update({
             generatedSummary: summaryMarkdown,
             embedding: null,
@@ -412,4 +429,6 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-processModels();
+export { generateSummary };
+
+generateSummary();

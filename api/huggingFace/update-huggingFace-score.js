@@ -8,39 +8,43 @@ const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-const replicateApiKey = process.env.REPLICATE_API_KEY;
+const huggingFaceApiToken = process.env.HUGGINGFACE_API_TOKEN;
 
-async function updateModelRuns(model) {
-  console.log(`Updating runs for model: ${model.creator}/${model.modelName}`);
+async function updateModelLikes(model) {
+  console.log(`Updating likes for model: ${model.creator}/${model.modelName}`);
   try {
     const response = await axios.get(
-      `https://api.replicate.com/v1/models/${model.creator}/${model.modelName}`,
+      `https://huggingface.co/api/models/${model.creator}/${model.modelName}`,
       {
         headers: {
-          Authorization: `Token ${replicateApiKey}`,
+          Authorization: `Bearer ${huggingFaceApiToken}`,
         },
       }
     );
 
     const currentTimestamp = new Date().toISOString();
+    const newLikesCount = response.data.likes;
 
     const { error: updateError } = await supabase
       .from("modelsData")
       .update({
-        runs: response.data.run_count,
+        huggingFaceScore: newLikesCount,
         lastUpdated: currentTimestamp,
       })
-      .eq("platform", "replicate")
+      .eq("platform", "huggingFace")
       .eq("id", model.id);
 
     if (updateError) {
       console.error(
-        `Failed to update runs for model ${model.creator}/${model.modelName} due to:`,
+        `Failed to update likes for model ${model.creator}/${model.modelName} due to:`,
         updateError
       );
     } else {
       console.log(
-        `Successfully updated runs and lastUpdated for model ${model.creator}/${model.modelName}`
+        `Successfully updated likes and lastUpdated for model ${model.creator}/${model.modelName}`
+      );
+      console.log(
+        `New likes count for ${model.creator}/${model.modelName}: ${newLikesCount}`
       );
     }
   } catch (error) {
@@ -56,8 +60,7 @@ async function fetchModelsFromDatabase() {
   const { data: models, error: fetchError } = await supabase
     .from("modelsData")
     .select("id, creator, modelName, lastUpdated")
-    .eq("platform", "replicate")
-
+    .eq("platform", "huggingFace")
     .lt(
       "lastUpdated",
       new Date(Date.now() - 0.5 * 24 * 60 * 60 * 1000).toISOString()
@@ -71,16 +74,16 @@ async function fetchModelsFromDatabase() {
   console.log(`Found ${models.length} models to update.`);
 
   for (const model of models) {
-    await updateModelRuns(model);
+    await updateModelLikes(model);
   }
 
-  console.log("Finished updating model runs.");
+  console.log("Finished updating model likes.");
 }
 
-export function updateRuns() {
-  console.log("Initiating the updateRuns process...");
+export function updateLikes() {
+  console.log("Initiating the updateLikes process...");
   fetchModelsFromDatabase();
 }
 
-// Automatically call updateRuns when this script is executed
-updateRuns();
+// Automatically call updateLikes when this script is executed
+updateLikes();

@@ -164,14 +164,13 @@ async function createEmbeddingForPaper(paper) {
     lastUpdated,
     arxivId,
     generatedSummary,
-    generatedUseCase,
   } = paper;
 
   const inputText = `${title || ""} ${arxivCategories || ""} ${
     abstract || ""
   } ${authors || ""} ${lastUpdated || ""} ${arxivId || ""} ${
     generatedSummary || ""
-  } ${generatedUseCase || ""}`;
+  } `;
 
   try {
     const embeddingResponse = await openAi.createEmbedding({
