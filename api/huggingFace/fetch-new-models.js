@@ -42,9 +42,9 @@ export async function fetchNewModels() {
     const { modelsData, nextUrl } = await fetchModelData(huggingFaceBaseUrl);
     huggingFaceBaseUrl = nextUrl;
     for (const modelData of modelsData) {
-      if (modelData.likes < 5) {
+      if (modelData.likes < 50) {
         console.log(
-          "Reached a model with less than 5 likes, finishing the script."
+          "Reached a model with less than 50 likes, finishing the script."
         );
         return;
       }
@@ -67,7 +67,6 @@ export async function fetchNewModels() {
         );
         continue;
       }
-      const tags = modelData.pipeline_tag;
       const huggingFaceScore = modelData.likes;
       const modelUrl = `https://huggingface.co/${modelData.id}`;
       const slug = generateSlug(creator, modelName);
@@ -90,7 +89,7 @@ export async function fetchNewModels() {
           upsertError
         );
       } else {
-        console.log(`Upserted model ${creator}/${modelName} with tag: ${tags}`);
+        console.log(`Upserted model ${creator}/${modelName}`);
       }
     }
   }

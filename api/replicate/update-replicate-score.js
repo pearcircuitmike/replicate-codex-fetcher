@@ -7,11 +7,11 @@ dotenv.config();
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
 const supabase = createClient(supabaseUrl, supabaseKey);
-
 const replicateApiKey = process.env.REPLICATE_API_KEY;
 
 async function updateModelRuns(model) {
   console.log(`Updating runs for model: ${model.creator}/${model.modelName}`);
+
   try {
     const response = await axios.get(
       `https://api.replicate.com/v1/models/${model.creator}/${model.modelName}`,
@@ -27,7 +27,7 @@ async function updateModelRuns(model) {
     const { error: updateError } = await supabase
       .from("modelsData")
       .update({
-        runs: response.data.run_count,
+        replicateScore: response.data.run_count,
         lastUpdated: currentTimestamp,
       })
       .eq("platform", "replicate")
@@ -51,35 +51,45 @@ async function updateModelRuns(model) {
   }
 }
 
-async function fetchModelsFromDatabase() {
-  console.log("Fetching models from the database...");
-  const { data: models, error: fetchError } = await supabase
-    .from("modelsData")
-    .select("id, creator, modelName, lastUpdated")
-    .eq("platform", "replicate")
+export async function updateRuns() {
+  console.log("Initiating the updateRuns process...");
 
-    .lt(
-      "lastUpdated",
-      new Date(Date.now() - 0.5 * 24 * 60 * 60 * 1000).toISOString()
-    ); // 12 hrs
+  let start = 0;
+  const limit = 1000;
+  let hasMoreData = true;
 
-  if (fetchError) {
-    console.error("Error fetching models from the database:", fetchError);
-    return;
-  }
+  while (hasMoreData) {
+    const {
+      data: models,
+      error: fetchError,
+      count,
+    } = await supabase
+      .from("modelsData")
+      .select("id, creator, modelName, indexedDate", { count: "exact" })
+      .eq("platform", "replicate")
+      .gte(
+        "indexedDate",
+        new Date(new Date().getTime() - 30 * 24 * 60 * 60 * 1000).toISOString()
+      )
+      .range(start, start + limit - 1);
 
-  console.log(`Found ${models.length} models to update.`);
+    if (fetchError) {
+      console.error("Error fetching models from the database:", fetchError);
+      return;
+    }
 
-  for (const model of models) {
-    await updateModelRuns(model);
+    console.log(`Found ${models.length} models to update.`);
+
+    if (models.length > 0) {
+      const updatePromises = models.map((model) => updateModelRuns(model));
+      await Promise.all(updatePromises);
+    }
+
+    start += limit;
+    hasMoreData = start < count;
   }
 
   console.log("Finished updating model runs.");
-}
-
-export function updateRuns() {
-  console.log("Initiating the updateRuns process...");
-  fetchModelsFromDatabase();
 }
 
 // Automatically call updateRuns when this script is executed

@@ -124,7 +124,6 @@ async function checkAndUpsertPaper(data, arxivCategories, pubDate) {
         paperUrl: sanitizeValue(data.link),
         pdfUrl: pdfUrl,
         publishedDate: publishedDate,
-        indexedDate: lastUpdated,
         arxivCategories: arxivCategories.map(sanitizeValue),
         slug: slug,
       })

@@ -7,11 +7,11 @@ dotenv.config();
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
 const supabase = createClient(supabaseUrl, supabaseKey);
-
 const huggingFaceApiToken = process.env.HUGGINGFACE_API_TOKEN;
 
 async function updateModelLikes(model) {
   console.log(`Updating likes for model: ${model.creator}/${model.modelName}`);
+
   try {
     const response = await axios.get(
       `https://huggingface.co/api/models/${model.creator}/${model.modelName}`,
@@ -55,35 +55,40 @@ async function updateModelLikes(model) {
   }
 }
 
-async function fetchModelsFromDatabase() {
-  console.log("Fetching models from the database...");
-  const { data: models, error: fetchError } = await supabase
-    .from("modelsData")
-    .select("id, creator, modelName, lastUpdated")
-    .eq("platform", "huggingFace")
-    .lt(
-      "lastUpdated",
-      new Date(Date.now() - 0.5 * 24 * 60 * 60 * 1000).toISOString()
-    ); // 12 hrs
+export async function updateLikes() {
+  console.log("Initiating the updateLikes process...");
 
-  if (fetchError) {
-    console.error("Error fetching models from the database:", fetchError);
-    return;
-  }
+  let start = 0;
+  const limit = 1000;
+  let hasMoreData = true;
 
-  console.log(`Found ${models.length} models to update.`);
+  while (hasMoreData) {
+    const { data: models, error: fetchError } = await supabase
+      .from("modelsData")
+      .select("id, creator, modelName, indexedDate")
+      .eq("platform", "huggingFace")
+      .gte(
+        "indexedDate",
+        new Date(new Date().getTime() - 30 * 24 * 60 * 60 * 1000).toISOString()
+      )
+      .range(start, start + limit - 1);
 
-  for (const model of models) {
-    await updateModelLikes(model);
+    if (fetchError) {
+      console.error("Error fetching models from the database:", fetchError);
+      return;
+    }
+
+    console.log(`Found ${models.length} models to update.`);
+
+    if (models.length === 0) {
+      hasMoreData = false;
+    } else {
+      const updatePromises = models.map((model) => updateModelLikes(model));
+      await Promise.all(updatePromises);
+
+      start += limit;
+    }
   }
 
   console.log("Finished updating model likes.");
 }
-
-export function updateLikes() {
-  console.log("Initiating the updateLikes process...");
-  fetchModelsFromDatabase();
-}
-
-// Automatically call updateLikes when this script is executed
-updateLikes();

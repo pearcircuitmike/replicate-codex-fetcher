@@ -12,7 +12,7 @@ const openaiApiKey = process.env.OPENAI_SECRET_KEY;
 const configuration = new Configuration({ apiKey: openaiApiKey });
 const openAi = new OpenAIApi(configuration);
 
-async function createEmbeddings() {
+export async function createEmbeddings() {
   let start = 0;
   const limit = 1000;
   let hasMoreData = true;

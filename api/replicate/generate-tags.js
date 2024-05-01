@@ -20,10 +20,9 @@ export async function generateTags() {
     .from("modelsData")
     .select("*")
     .eq("platform", "replicate")
-
     .or("tags.eq.,tags.is.null");
 
-  console.log(models);
+  // console.log(models);
 
   if (fetchError) {
     console.error(fetchError);
@@ -108,16 +107,17 @@ export async function generateTags() {
       console.log(`Claude Response: ${category}`);
 
       if (classificationCategories.includes(category)) {
+        const currentDate = new Date().toISOString();
         const { error: updateError } = await supabase
           .from("modelsData")
-          .update({ tags: category })
+          .update({ tags: category, lastUpdated: currentDate })
           .match({ id: model.id });
 
         if (updateError) {
           console.error(`Failed to update model ID ${model.id}:`, updateError);
         } else {
           console.log(
-            `Updated model ID ${model.id} with category: ${category}`
+            `Updated model ID ${model.id} with category: ${category} and lastUpdated: ${currentDate}`
           );
         }
       } else {

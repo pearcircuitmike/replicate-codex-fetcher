@@ -8,7 +8,6 @@ dotenv.config();
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
 const supabase = createClient(supabaseUrl, supabaseKey);
-
 const replicateApiKey = process.env.REPLICATE_API_KEY;
 
 function generateSlug(creator, modelName) {
@@ -18,6 +17,13 @@ function generateSlug(creator, modelName) {
 }
 
 async function checkAndUpsertModel(data) {
+  if (data.run_count < 1000) {
+    console.log(
+      `Skipping model ${data.owner}/${data.name} with ${data.run_count} runs (less than 1000)`
+    );
+    return;
+  }
+
   const currentDate = new Date().toISOString();
   const slug = generateSlug(data.owner, data.name);
 
@@ -41,16 +47,13 @@ async function checkAndUpsertModel(data) {
     const { error: updateError } = await supabase
       .from("modelsData")
       .update({
-        tags: "",
-        runs: data.run_count,
+        replicateScore: data.run_count,
         lastUpdated: currentDate,
         description: data.description,
-
         modelUrl: data.url,
         githubUrl: data.github_url,
         paperUrl: data.paper_url,
         licenseUrl: data.license_url,
-        indexedDate: currentDate,
         slug: slug,
       })
       .eq("id", existingModel.id)
@@ -69,12 +72,10 @@ async function checkAndUpsertModel(data) {
       {
         creator: data.owner,
         modelName: data.name,
-        tags: "",
-        runs: data.run_count,
+        replicateScore: data.run_count,
         lastUpdated: currentDate,
         platform: "replicate",
         description: data.description,
-
         example: data.cover_image_url,
         modelUrl: data.url,
         githubUrl: data.github_url,

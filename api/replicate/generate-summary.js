@@ -265,7 +265,7 @@ async function createEmbeddingForModel(model) {
     creator,
     modelName,
     tags,
-    runs,
+    replicateScore,
     lastUpdated,
     platform,
     description,
@@ -280,7 +280,7 @@ async function createEmbeddingForModel(model) {
   } = model;
 
   const inputText = `${creator || ""} ${modelName || ""} ${tags || ""} ${
-    runs || ""
+    replicateScore || ""
   } ${lastUpdated || ""} ${platform || ""} ${description || ""} ${
     example || ""
   } ${modelUrl || ""} ${githubUrl || ""} ${paperUrl || ""} ${
