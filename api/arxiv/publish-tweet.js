@@ -2,8 +2,6 @@ import { createClient } from "@supabase/supabase-js";
 import dotenv from "dotenv";
 import Anthropic from "@anthropic-ai/sdk";
 import { TwitterApi } from "twitter-api-v2";
-import puppeteer from "puppeteer";
-import sharp from "sharp";
 
 dotenv.config();
 
@@ -43,9 +41,9 @@ async function generateTweetText(summary, abstract, platform, slug) {
         {
           role: "user",
           content: `Summarize the following research paper in one clear, twitter concise phrase:
-  
-            ${truncatedText}
-            `,
+
+          ${truncatedText}
+          `,
         },
       ],
     });
@@ -68,51 +66,9 @@ async function generateTweetText(summary, abstract, platform, slug) {
   }
 }
 
-async function captureScreenshot(url) {
-  const browser = await puppeteer.launch();
-  const page = await browser.newPage();
-  await page.setViewport({ width: 1280, height: 800 });
-  await page.goto(url, { waitUntil: "networkidle2" });
-  const screenshotBuffer = await page.screenshot({ fullPage: false });
-  await browser.close();
-  return screenshotBuffer;
-}
-
-async function processImage(imageBuffer) {
-  // Get image metadata to check dimensions
-  const metadata = await sharp(imageBuffer).metadata();
-
-  // Set the initial top and calculate maximum possible height
-  const top = 230;
-  let height = 640; // Initial desired height
-
-  // Adjust height if necessary to fit within the image dimensions
-  if (metadata.height < top + height) {
-    height = metadata.height - top; // Adjust height so that top + height does not exceed the image height
-  }
-
-  // Proceed with cropping if dimensions are adequate
-  const croppedImage = await sharp(imageBuffer)
-    .extract({ left: 0, top: top, width: 1280, height: height })
-    .toBuffer();
-
-  // Resize the cropped image to the desired final dimensions
-  const resizedImage = await sharp(croppedImage)
-    .resize({ width: 1200, height: 675, fit: "cover" })
-    .toFormat("png")
-    .toBuffer();
-
-  return resizedImage;
-}
-
-async function postTweetWithImage(tweetText, imageBuffer) {
+async function postTweet(tweetText) {
   try {
-    const mediaId = await client.v1.uploadMedia(imageBuffer, {
-      mimeType: "image/png",
-    });
-    const tweet = await client.v2.tweet(tweetText, {
-      media: { media_ids: [mediaId] },
-    });
+    const tweet = await client.v2.tweet(tweetText);
     console.log(`Tweet posted with ID ${tweet.data.id}`);
     return tweet.data.id;
   } catch (error) {
@@ -130,7 +86,7 @@ async function processPapers() {
       new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString()
     )
     .is("twitterPublishedDate", null)
-    .order("totalScore", { ascending: false }) // Assuming 'score' is the column name and you want the highest scores first
+    .order("totalScore", { ascending: false })
     .limit(1);
 
   if (error) {
@@ -153,11 +109,7 @@ async function processPapers() {
       continue;
     }
 
-    const screenshotUrl = `https://aimodels.fyi/papers/${platform}/${slug}`;
-    const screenshotBuffer = await captureScreenshot(screenshotUrl);
-    const processedImageBuffer = await processImage(screenshotBuffer);
-
-    const tweetId = await postTweetWithImage(tweetText, processedImageBuffer);
+    const tweetId = await postTweet(tweetText);
 
     if (tweetId) {
       const { error: updateError } = await supabase
