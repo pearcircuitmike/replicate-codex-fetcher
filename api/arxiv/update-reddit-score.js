@@ -123,7 +123,7 @@ async function updateRedditScore() {
       .select("id, paperUrl")
       .gte(
         "publishedDate",
-        new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
+        new Date(Date.now() - 4 * 24 * 60 * 60 * 1000).toISOString()
       )
       .range(start, start + limit - 1);
 
@@ -160,8 +160,8 @@ async function updateRedditScore() {
           );
         }
 
-        // Delay for 667 milliseconds to stay within the rate limit
-        await delay(667);
+        // Delay for 867 milliseconds to stay within the rate limit
+        await delay(867);
       }
       start += limit;
       console.log(`Processed papers up to ${start}`);

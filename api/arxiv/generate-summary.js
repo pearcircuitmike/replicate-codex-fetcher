@@ -63,10 +63,13 @@ async function summarizeText(text, relatedSlugs, platform) {
         {
           role: "user",
           content: `${truncatedText}\n\n
+          
+          <requirements>
           A blog post in proper markdown explaining the provided paper in plain english with
-          sections.  Ensure your response embeds these internal links in the flow of the text for SEO purposes only where the text is relevant to the keyword and use correct markdown or you will have totally failed:  ${linksString}
+          sections.  Ensure your response embeds these internal links in the flow of the text for SEO purposes only where the text is relevant to the keyword and use correct markdown or you will have totally failed:
+          
 
-          Overview • In bullet point form in markdown
+          Overview • Short sentences in bullet point form in markdown
           Plain English Explanation
           • add internal links in proper markdown syntax for SEO purposes only where the text is relevant to the keyword
           • Provide a plain English explanation of the same content covered in the technical explanation in markdown
@@ -90,6 +93,13 @@ async function summarizeText(text, relatedSlugs, platform) {
           • Summarize the main takeaways and their potential implications for the field and society at large
 
           Each section will have several paragraphs of several detailed sentences each in markdown.
+         
+          </requirements>
+         
+          
+          <relatedlinks>
+          ${linksString}
+          </relatedlinks>
 
           Never say I or talk in first person. Never apologize or assess your work.
           Never write a title. All sections headings must be h2. Sparingly bold key concepts. Never say something like "here is the explanation," just provide it no matter what. Your response is written in correct markdown syntax without HTML elements. 
