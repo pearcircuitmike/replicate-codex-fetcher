@@ -31,3 +31,10 @@ yarn-error.log*
 
 # vercel
 .vercel
+
+
+#ignore clips
+output/*
+samples/*
+trimmed_clips/*
+node_modules

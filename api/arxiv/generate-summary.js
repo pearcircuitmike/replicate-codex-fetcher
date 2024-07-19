@@ -3,7 +3,7 @@ import dotenv from "dotenv";
 import axios from "axios";
 import { JSDOM } from "jsdom";
 import Anthropic from "@anthropic-ai/sdk";
-import { Configuration, OpenAIApi } from "openai";
+import OpenAI from "openai";
 
 dotenv.config();
 
@@ -15,8 +15,7 @@ const claudeApiKey = process.env.CLAUDE_API_KEY;
 const anthropic = new Anthropic({ apiKey: claudeApiKey });
 
 const openaiApiKey = process.env.OPENAI_SECRET_KEY;
-const configuration = new Configuration({ apiKey: openaiApiKey });
-const openAi = new OpenAIApi(configuration);
+const openai = new OpenAI({ apiKey: openaiApiKey });
 
 async function fetchPaperHtml(arxivId) {
   const htmlUrl = `https://arxiv.org/html/${arxivId}v1`;
@@ -183,12 +182,12 @@ async function createEmbeddingForPaper(paper) {
   } `;
 
   try {
-    const embeddingResponse = await openAi.createEmbedding({
+    const embeddingResponse = await openai.embeddings.create({
       model: "text-embedding-ada-002",
       input: inputText,
     });
 
-    const [{ embedding }] = embeddingResponse.data.data;
+    const [{ embedding }] = embeddingResponse.data;
 
     await supabase
       .from("arxivPapersData")

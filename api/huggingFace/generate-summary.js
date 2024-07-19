@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import { Configuration, OpenAIApi } from "openai";
+import OpenAI from "openai";
 import dotenv from "dotenv";
 import Anthropic from "@anthropic-ai/sdk";
 
@@ -10,8 +10,7 @@ const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-const configuration = new Configuration({ apiKey: openaiApiKey });
-const openai = new OpenAIApi(configuration);
+const openai = new OpenAI({ apiKey: openaiApiKey });
 
 const claudeApiKey = process.env.CLAUDE_API_KEY;
 const anthropic = new Anthropic({ apiKey: claudeApiKey });
@@ -241,12 +240,12 @@ async function createEmbeddingForModel(model) {
   } ${indexedDate || ""} ${slug || ""} ${generatedSummary || ""} `;
 
   try {
-    const embeddingResponse = await openai.createEmbedding({
+    const embeddingResponse = await openai.embeddings.create({
       model: "text-embedding-ada-002",
       input: inputText,
     });
 
-    const [{ embedding }] = embeddingResponse.data.data;
+    const [{ embedding }] = embeddingResponse.data;
 
     await supabase
       .from("modelsData")

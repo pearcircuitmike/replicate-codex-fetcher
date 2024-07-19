@@ -1,6 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import dotenv from "dotenv";
-import { Configuration, OpenAIApi } from "openai";
+import OpenAI from "openai";
 
 dotenv.config();
 
@@ -9,8 +9,7 @@ const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 const openaiApiKey = process.env.OPENAI_SECRET_KEY;
-const configuration = new Configuration({ apiKey: openaiApiKey });
-const openAi = new OpenAIApi(configuration);
+const openai = new OpenAI({ apiKey: openaiApiKey });
 
 export async function createEmbeddings() {
   let start = 0;
@@ -56,12 +55,12 @@ export async function createEmbeddings() {
         }`;
 
         try {
-          const embeddingResponse = await openAi.createEmbedding({
+          const embeddingResponse = await openai.embeddings.create({
             model: "text-embedding-ada-002",
             input: inputText,
           });
 
-          const [{ embedding }] = embeddingResponse.data.data;
+          const [{ embedding }] = embeddingResponse.data;
 
           await supabase
             .from("arxivPapersData")
