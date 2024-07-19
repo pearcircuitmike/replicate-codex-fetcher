@@ -35,8 +35,8 @@ const runScript = (scriptPath) => {
   });
 };
 
-// Schedule the scripts to run Monday, Tuesday, Wednesday, Thursday, and Friday at 8am Eastern Time
-cron.schedule("09 08 * * *", async () => {
+// Schedule the scripts to run every day at 6:05 AM
+cron.schedule("05 06 * * *", async () => {
   if (isScriptRunning) {
     logWithTimestamp("Scripts are already running. Skipping execution.");
     return;
@@ -50,7 +50,10 @@ cron.schedule("09 08 * * *", async () => {
     await runScript("api/arxiv/create-embeddings.js");
     await runScript("api/arxiv/update-hn-score.js");
     await runScript("api/arxiv/update-reddit-score.js");
+    await runScript("api/arxiv/update-twitter-score.js");
     await runScript("api/arxiv/generate-summary.js");
+    await runScript("api/arxiv/publish-to-devto.js");
+    await runScript("api/arxiv/publish-to-hashnode.js");
   } catch (error) {
     logWithTimestamp(`Error running scripts: ${error}`);
   }
@@ -59,5 +62,5 @@ cron.schedule("09 08 * * *", async () => {
 });
 
 logWithTimestamp(
-  "Scheduler script started. Scripts will run Monday, Tuesday, Wednesday, Thursday, and Friday at 130am Eastern Time if no scripts are running."
+  "Scheduler script started. Scripts will run every day at 6:05 AM UTC if no scripts are running."
 );
