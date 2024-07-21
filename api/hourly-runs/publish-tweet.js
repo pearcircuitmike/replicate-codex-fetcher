@@ -24,7 +24,7 @@ async function generateTweetText(summary, abstract, platform, slug) {
   const promptPercentage = 0.8;
   const maxPromptLength = Math.floor(maxTokens * promptPercentage);
   const prefix = "🔥 Trending paper: ";
-  const suffix = `\n\nMore info: https://aimodels.fyi/papers/${platform}/${slug}`;
+  const suffix = `\n\nhttps://aimodels.fyi/papers/${platform}/${slug}`;
   const maxTweetLength = 280 - prefix.length - suffix.length;
 
   try {
@@ -94,45 +94,43 @@ async function processPapers() {
     return;
   }
 
-  for (const paper of papers) {
-    const { id, generatedSummary, abstract, platform, slug } = paper;
-
-    const tweetText = await generateTweetText(
-      generatedSummary,
-      abstract,
-      platform,
-      slug
-    );
-
-    if (!tweetText) {
-      console.log(`Unable to generate tweet text for paper ${id}`);
-      continue;
-    }
-
-    const tweetId = await postTweet(tweetText);
-
-    if (tweetId) {
-      const { error: updateError } = await supabase
-        .from("arxivPapersData")
-        .update({ twitterPublishedDate: new Date().toISOString() })
-        .eq("id", id);
-
-      if (updateError) {
-        console.error(
-          `Error updating twitterPublishedDate for paper ${id}:`,
-          updateError
-        );
-      } else {
-        console.log(`Updated twitterPublishedDate for paper ${id}`);
-      }
-    }
-
-    await delay(30000); // 30-second delay to avoid rate limits
+  if (papers.length === 0) {
+    console.log("No papers found to process");
+    return;
   }
-}
 
-function delay(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  const paper = papers[0];
+  const { id, generatedSummary, abstract, platform, slug } = paper;
+
+  const tweetText = await generateTweetText(
+    generatedSummary,
+    abstract,
+    platform,
+    slug
+  );
+
+  if (!tweetText) {
+    console.log(`Unable to generate tweet text for paper ${id}`);
+    return;
+  }
+
+  const tweetId = await postTweet(tweetText);
+
+  if (tweetId) {
+    const { error: updateError } = await supabase
+      .from("arxivPapersData")
+      .update({ twitterPublishedDate: new Date().toISOString() })
+      .eq("id", id);
+
+    if (updateError) {
+      console.error(
+        `Error updating twitterPublishedDate for paper ${id}:`,
+        updateError
+      );
+    } else {
+      console.log(`Updated twitterPublishedDate for paper ${id}`);
+    }
+  }
 }
 
 processPapers();
