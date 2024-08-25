@@ -71,12 +71,12 @@ async function getPapersOfTheWeek() {
 async function generateSummary(title, content) {
   try {
     const message = await anthropic.messages.create({
-      model: "claude-3-sonnet-20240229",
+      model: "claude-3-5-sonnet-20240620",
       max_tokens: 150,
       messages: [
         {
           role: "user",
-          content: `Summarize the following research paper in an extremely concise, tight, short summary of 1-2 sentences. Focus on the key contributions and implications:
+          content: `Summarize the following research paper in an extremely concise, tight, short summary of 1-2 sentences. Focus on the key contributions and implications. Do not restate or mention the prompt, just provide the summary:
 
           Title: ${title}
 

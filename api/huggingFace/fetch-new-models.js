@@ -42,9 +42,9 @@ export async function fetchNewModels() {
     const { modelsData, nextUrl } = await fetchModelData(huggingFaceBaseUrl);
     huggingFaceBaseUrl = nextUrl;
     for (const modelData of modelsData) {
-      if (modelData.likes < 50) {
+      if (modelData.likes < 45) {
         console.log(
-          "Reached a model with less than 50 likes, finishing the script."
+          "Reached a model with less than 45 likes, finishing the script."
         );
         return;
       }

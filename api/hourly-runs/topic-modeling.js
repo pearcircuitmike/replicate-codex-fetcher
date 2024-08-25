@@ -54,7 +54,7 @@ Please respond with a numbered list of topic names, like this:
 2. [Specific Topic 2 Name]
 ...and so on.
 
-Ensure each topic has a specific name, even if some keywords seem general. Use your expertise to interpret the overall theme based on the combination of keywords.`;
+Ensure each topic has a specific name, even if some keywords seem general. Use your expertise to interpret the overall theme based on the combination of keywords. Never reply with something generic like "Topic 3" - instead give the actual topic name.`;
 
   try {
     const message = await anthropic.messages.create({
@@ -106,8 +106,16 @@ function assignPapersToTopics(papers, ldaResult) {
 }
 
 async function insertTopicModelingResults(topicsWithPapers, topicNames) {
-  const results = topicsWithPapers.map((topic, index) => ({
-    topic_name: topicNames[index],
+  // Sort topics by number of keywords (descending order)
+  const sortedTopics = topicsWithPapers
+    .map((topic, index) => ({ ...topic, name: topicNames[index] }))
+    .sort((a, b) => b.topic.length - a.topic.length);
+
+  // Select top 3 topics
+  const top3Topics = sortedTopics.slice(0, 3);
+
+  const results = top3Topics.map((topic) => ({
+    topic_name: topic.name,
     keywords: topic.topic.map((t) => t.term),
     keyword_probabilities: topic.topic.map((t) => t.probability),
     paper_ids: topic.papers.map((paper) => paper.id),
@@ -120,7 +128,7 @@ async function insertTopicModelingResults(topicsWithPapers, topicNames) {
   if (error) {
     console.error("Error inserting topic modeling results:", error);
   } else {
-    console.log("Successfully inserted topic modeling results");
+    console.log("Successfully inserted top 3 topic modeling results");
   }
 }
 
@@ -129,7 +137,7 @@ async function runTopicModeling() {
 
   const papers = await fetchRecentPapers();
   if (papers.length === 0) {
-    console.log("No papers found in the last 7 days with totalScore > 0.1");
+    console.log("No papers found in the last 14 days with totalScore > 0");
     return;
   }
 
@@ -159,7 +167,9 @@ async function runTopicModeling() {
     console.log();
   });
 
-  console.log("Topic modeling completed and results stored in the database.");
+  console.log(
+    "Topic modeling completed and top 3 results stored in the database."
+  );
 }
 
 // Main execution

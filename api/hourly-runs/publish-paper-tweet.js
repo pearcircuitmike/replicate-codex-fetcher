@@ -40,7 +40,7 @@ async function generateTweetText(summary, abstract, platform, slug) {
       messages: [
         {
           role: "user",
-          content: `Summarize the following research paper in one clear, twitter concise phrase:
+          content: `Never restate the prompt, refer to the prompt, or admit you're an AI. Summarize the following research paper in one clear, twitter concise phrase (provide only the phrase and nothing else)
 
           ${truncatedText}
           `,
@@ -83,7 +83,7 @@ async function processPapers() {
     .select("*")
     .gte(
       "publishedDate",
-      new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString()
+      new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString()
     )
     .is("twitterPublishedDate", null)
     .order("totalScore", { ascending: false })

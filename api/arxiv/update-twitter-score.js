@@ -11,10 +11,12 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 const bearerToken = process.env.TWITTER_BEARER_TOKEN;
 const endpointUrl = "https://api.twitter.com/2/tweets/search/recent";
 
-async function getTwitterScoreForPaper(paperUrl) {
+async function getTwitterDataForPaper(paperUrl, paperId) {
   const params = new URLSearchParams({
     query: `url:"${paperUrl}" -is:retweet`,
-    "tweet.fields": "public_metrics",
+    "tweet.fields": "public_metrics,author_id",
+    "user.fields": "username",
+    expansions: "author_id",
     max_results: "10",
     sort_order: "relevancy",
   });
@@ -35,41 +37,40 @@ async function getTwitterScoreForPaper(paperUrl) {
     console.log("Twitter API Response:", JSON.stringify(data, null, 2));
 
     if (data.meta.result_count > 0) {
-      // Find the tweet with the highest engagement
-      const mostPopularTweet = data.data.reduce(
-        (max, tweet) =>
-          tweet.public_metrics.retweet_count + tweet.public_metrics.like_count >
-          max.public_metrics.retweet_count + max.public_metrics.like_count
-            ? tweet
-            : max,
-        data.data[0]
-      );
+      const tweetData = data.data.map((tweet) => ({
+        paper_id: paperId,
+        tweet_text: tweet.text,
+        tweet_id: tweet.id,
+        username: data.includes.users.find(
+          (user) => user.id === tweet.author_id
+        ).username,
+        retweet_count: tweet.public_metrics.retweet_count,
+        reply_count: tweet.public_metrics.reply_count,
+        like_count: tweet.public_metrics.like_count,
+        quote_count: tweet.public_metrics.quote_count,
+        bookmark_count: tweet.public_metrics.bookmark_count,
+        impression_count: tweet.public_metrics.impression_count,
+      }));
 
-      const score =
-        mostPopularTweet.public_metrics.retweet_count +
-        mostPopularTweet.public_metrics.like_count;
-      console.log(
-        `Score for ${paperUrl}: ${score} (${mostPopularTweet.public_metrics.retweet_count} RTs + ${mostPopularTweet.public_metrics.like_count} likes)`
-      );
-      return score;
+      return tweetData;
     } else {
       console.log(`No tweets found for ${paperUrl}`);
-      return null;
+      return [];
     }
   } catch (error) {
     console.error(`Error searching for tweets: ${error}`);
-    return null;
+    return [];
   }
 }
 
-async function logAndUpdateTwitterScores() {
+async function logAndUpdateTwitterData() {
   const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
   const { data: papers, error } = await supabase
     .from("arxivPapersData")
     .select("id, paperUrl, title, totalScore")
     .gte("indexedDate", weekAgo)
-    .gt("totalScore", 1)
+    .gt("totalScore", 0.1)
     .order("totalScore", { ascending: false })
     .limit(10);
 
@@ -80,30 +81,26 @@ async function logAndUpdateTwitterScores() {
 
   for (const paper of papers) {
     const { id, paperUrl, title } = paper;
-    const twitterScore = await getTwitterScoreForPaper(paperUrl);
+    const tweetData = await getTwitterDataForPaper(paperUrl, id);
 
     console.log(
-      `Paper ID: ${id}, Title: ${title}, URL: ${paperUrl}, Twitter Score: ${twitterScore}`
+      `Paper ID: ${id}, Title: ${title}, URL: ${paperUrl}, Tweets found: ${tweetData.length}`
     );
 
-    if (twitterScore !== null) {
-      const { error: updateError } = await supabase
-        .from("arxivPapersData")
-        .update({ twitterScore })
-        .eq("id", id);
+    if (tweetData.length > 0) {
+      const { error: insertError } = await supabase
+        .from("paper_tweets")
+        .insert(tweetData);
 
-      if (updateError) {
-        console.error(
-          `Error updating Twitter score for paper ${id}:`,
-          updateError
-        );
+      if (insertError) {
+        console.error(`Error inserting tweets for paper ${id}:`, insertError);
       } else {
-        console.log(`Successfully updated Twitter score for paper ${id}`);
+        console.log(
+          `Successfully inserted ${tweetData.length} tweets for paper ${id}`
+        );
       }
     } else {
-      console.log(
-        `Skipped updating Twitter score for paper ${id} due to error or no tweets found`
-      );
+      console.log(`No tweets to insert for paper ${id}`);
     }
 
     // Delay next API call by 2 seconds to respect Twitter's rate limit
@@ -111,4 +108,4 @@ async function logAndUpdateTwitterScores() {
   }
 }
 
-logAndUpdateTwitterScores();
+logAndUpdateTwitterData();

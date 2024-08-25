@@ -69,7 +69,7 @@ async function fireWeeklyUpdate() {
     let totalCount = 0;
 
     // Calculate delay to achieve 8 requests per second
-    const delayMs = 1000 / 8; // 125ms between requests
+    const delayMs = 10; // 10ms between requests... supposed to be 1 req every 8s but bc we wait for it to return we're probably ok?
 
     while (true) {
       const { emails, totalCount: count } = await getWeeklyDigestEmails(

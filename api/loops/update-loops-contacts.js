@@ -13,7 +13,7 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 // Simplified rate limiter
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const rateLimiter = async () => {
-  await sleep(100); // Ensures 10 requests per second
+  await sleep(1); // Ensures 1000 requests per second
 };
 
 async function updateLoopsContacts() {
@@ -88,7 +88,9 @@ async function updateLoopsContacts() {
             userId: profile.id,
             firstName: profile.full_name?.split(" ")[0] || "",
             lastName: profile.full_name?.split(" ").slice(1).join(" ") || "",
-            userGroup: Math.random() < 0.5 ? "Group 3" : "Group 5",
+            userGroup: ["Group 7", "Group 7", "Group 7"][
+              Math.floor(Math.random() * 3)
+            ],
             stripe_subscription_status:
               profile.stripe_subscription_status || null,
           };
