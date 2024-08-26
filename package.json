@@ -23,7 +23,6 @@
     "cors": "^2.8.5",
     "dotenv": "^16.0.3",
     "express": "^4.19.2",
-    "ffprobe": "^1.1.2",
     "got": "^11.8.0",
     "html2canvas": "^1.4.1",
     "http-link-header": "^1.1.1",
