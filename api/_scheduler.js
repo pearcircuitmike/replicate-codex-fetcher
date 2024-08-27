@@ -55,8 +55,10 @@ cron.schedule("05 06 * * *", async () => {
     // New scripts
     await runScript("api/replicate/run-all-replicate-updates.js");
     await runScript("api/huggingFace/call-all-functions.js");
+    await runScript("api/huggingFace/publish-to-devto.js");
     await runScript("api/loops/update-loops-contacts.js");
     await runScript("api/site/topic-modeling.js");
+    await runScript("api/site/papers-of-the-week.js");
     await runScript("api/twitter/publish-paper-tweet.js");
 
     logWithTimestamp("All scheduled scripts completed successfully.");
