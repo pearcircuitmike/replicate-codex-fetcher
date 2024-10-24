@@ -35,7 +35,7 @@ async function generateTweetText(summary, abstract, platform, slug) {
     }
 
     const message = await anthropic.messages.create({
-      model: "claude-3-5-sonnet-20240620",
+      model: "claude-3-5-sonnet-20241022",
       max_tokens: maxTokens,
       messages: [
         {

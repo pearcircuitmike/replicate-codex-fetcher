@@ -71,7 +71,7 @@ async function getPapersOfTheWeek() {
 async function generateSummary(title, content) {
   try {
     const message = await anthropic.messages.create({
-      model: "claude-3-5-sonnet-20240620",
+      model: "claude-3-5-sonnet-20241022",
       max_tokens: 150,
       messages: [
         {
