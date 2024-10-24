@@ -60,6 +60,7 @@ cron.schedule("05 06 * * *", async () => {
     await runScript("api/site/topic-modeling.js");
     await runScript("api/site/papers-of-the-week.js");
     await runScript("api/twitter/publish-paper-tweet.js");
+    await runScript("api/twitter/publish-model-tweet.js");
 
     logWithTimestamp("All scheduled scripts completed successfully.");
   } catch (error) {
