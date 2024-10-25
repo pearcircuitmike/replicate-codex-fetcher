@@ -54,6 +54,7 @@ cron.schedule("05 06 * * *", async () => {
     await runScript("api/arxiv/choose-paper-tasks.js");
 
     // New scripts
+    await runScript("api/twitter/publish-paper-greentext.js");
     await runScript("api/replicate/run-all-replicate-updates.js");
     await runScript("api/huggingFace/call-all-functions.js");
     await runScript("api/huggingFace/publish-to-devto.js");
