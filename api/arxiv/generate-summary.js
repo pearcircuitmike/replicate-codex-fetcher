@@ -34,7 +34,7 @@ async function fetchPaperHtml(arxivId) {
 }
 
 async function summarizeText(text, relatedSlugs, platform) {
-  const maxTokens = 3000;
+  const maxTokens = 3900;
   const promptPercentage = 0.7;
   const maxPromptLength = Math.floor(maxTokens * promptPercentage);
 
@@ -69,15 +69,22 @@ async function summarizeText(text, relatedSlugs, platform) {
           
 
           Overview • Short sentences in bullet point form in markdown
+
           Plain English Explanation
           • add internal links in proper markdown syntax for SEO purposes only where the text is relevant to the keyword
           • Provide a plain English explanation of the same content covered in the technical explanation in markdown
           • Focus on the core ideas and their significance 
+          • Write simply and write like you talk. Write like paul graham.
           • Use analogies, examples, or metaphors to make complex concepts more accessible to a general audience
+
+         Key Findings
+          • add internal links in proper markdown syntax for SEO purposes only where the text is relevant to the keyword
+          • State the key findings of the paper, using only results explicitly provided in the paper
            
           Technical Explanation
           • add internal links in proper markdown syntax for SEO purposes only where the text is relevant to the keyword
           • Cover the key elements of the paper, including experiment design, architecture, and insights
+          • Implications for the Field: How do these findings advance the current state of knowledge or technology?
 
           Critical Analysis
         
