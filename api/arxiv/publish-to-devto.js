@@ -60,10 +60,23 @@ async function publishArticleToDev(article) {
     );
     const finalTitle = generatedTitle || title.substring(0, MAX_TITLE_LENGTH);
 
-    const introMessage = `*This is a Plain English Papers summary of a research paper called [${finalTitle}](https://aimodels.fyi/papers/arxiv/${slug}). If you like these kinds of analysis, you should join [AImodels.fyi](https://aimodels.fyi) or follow me on [Twitter](https://twitter.com/mikeyoung44).*\n\n`;
-    const outroMessage = `\n\n**If you enjoyed this summary, consider joining [AImodels.fyi](https://aimodels.fyi) or following me on [Twitter](https://twitter.com/mikeyoung44) for more AI and machine learning content.**`;
+    const introMessage = `*This is a Plain English Papers summary of a research paper called [${finalTitle}](https://aimodels.fyi/papers/arxiv/${slug}). If you like these kinds of analysis, you should join [AImodels.fyi](https://aimodels.fyi) or follow me on [Twitter](https://x.com/aimodelsfyi).*\n\n`;
 
-    const modifiedSummary = introMessage + generatedSummary + outroMessage;
+    // Find the start of the Plain English Explanation section and truncate after 40 chars
+    const sectionMarker = "## Plain English Explanation";
+    const summaryStartIndex = generatedSummary.indexOf(sectionMarker);
+    let truncatedSummary = generatedSummary;
+
+    if (summaryStartIndex !== -1) {
+      const contentStartIndex = summaryStartIndex + sectionMarker.length;
+      truncatedSummary =
+        generatedSummary.substring(0, contentStartIndex + 280) + "...";
+    }
+
+    const articleUrl = `https://aimodels.fyi/papers/arxiv/${slug}`;
+    const outroMessage = `\n\n[Click here to read the full summary of this paper](${articleUrl})`;
+
+    const modifiedSummary = introMessage + truncatedSummary + outroMessage;
 
     const payload = {
       article: {
@@ -71,9 +84,9 @@ async function publishArticleToDev(article) {
         body_markdown: modifiedSummary,
         published: true,
         main_image: thumbnail,
-        canonical_url: `https://aimodels.fyi/papers/arxiv/${slug}`,
+        canonical_url: articleUrl,
         description: finalTitle,
-        tags: ["machinelearning", "ai", "beginners", "datascience"],
+        tags: ["machinelearning", "ai", "programming", "datascience"],
       },
     };
 
