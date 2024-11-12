@@ -60,15 +60,17 @@ async function publishArticleToDev(article) {
     );
     const finalTitle = generatedTitle || title.substring(0, MAX_TITLE_LENGTH);
 
-    const introMessage = `*This is a Plain English Papers summary of a research paper called [${finalTitle}](https://aimodels.fyi/papers/arxiv/${slug}). If you like these kinds of analysis, you should join [AImodels.fyi](https://aimodels.fyi) or follow me on [Twitter](https://x.com/aimodelsfyi).*\n\n`;
+    const introMessage = `*This is a Plain English Papers summary of a research paper called [${finalTitle}](https://aimodels.fyi/papers/arxiv/${slug}). If you like these kinds of analysis, you should join [AImodels.fyi](https://aimodels.fyi) or follow us on [Twitter](https://x.com/aimodelsfyi).*\n\n`;
 
-    // Find the start of the Plain English Explanation section and truncate after 40 chars
-    const sectionMarker = "## Plain English Explanation";
-    const summaryStartIndex = generatedSummary.indexOf(sectionMarker);
+    // Find the start of the Plain English Explanation section using case-insensitive search
+    const summaryStartIndex = generatedSummary
+      .toLowerCase()
+      .indexOf("## plain english explanation");
     let truncatedSummary = generatedSummary;
 
     if (summaryStartIndex !== -1) {
-      const contentStartIndex = summaryStartIndex + sectionMarker.length;
+      const contentStartIndex =
+        summaryStartIndex + "## Plain English Explanation".length;
       truncatedSummary =
         generatedSummary.substring(0, contentStartIndex + 280) + "...";
     }

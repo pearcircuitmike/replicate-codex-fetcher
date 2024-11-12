@@ -24,10 +24,26 @@ async function publishArticleToDev(article) {
   const titlePlatform = toTitleCase(platform);
   const titleCreator = toTitleCase(creator);
 
-  const introMessage = `*This is a simplified guide to an AI model called [${titleModelName}](https://aimodels.fyi/models/${platform}/${slug}) maintained by [${titleCreator}](https://aimodels.fyi/creators/${platform}/${creator}). If you like these kinds of guides, you should subscribe to the [AImodels.fyi newsletter](https://aimodels.substack.com) or follow me on [Twitter](https://twitter.com/mikeyoung44).*\n\n`;
-  const outroMessage = `\n\n**If you enjoyed this guide, consider subscribing to the [AImodels.fyi newsletter](https://aimodels.substack.com) or following me on [Twitter](https://twitter.com/mikeyoung44) for more AI and machine learning content.**`;
+  const introMessage = `*This is a simplified guide to an AI model called [${titleModelName}](https://aimodels.fyi/models/${platform}/${slug}) maintained by [${titleCreator}](https://aimodels.fyi/creators/${platform}/${creator}). If you like these kinds of analysis, you should join [AImodels.fyi](https://aimodels.fyi) or follow us on [Twitter](https://x.com/aimodelsfyi).*\n\n`;
 
-  const modifiedSummary = introMessage + generatedSummary + outroMessage;
+  // Find the start of the Capabilities section using case-insensitive search
+  const summaryStartIndex = generatedSummary
+    .toLowerCase()
+    .indexOf("## capabilities");
+  let truncatedSummary = generatedSummary;
+
+  if (summaryStartIndex !== -1) {
+    truncatedSummary =
+      generatedSummary.substring(
+        0,
+        summaryStartIndex + "## Capabilities".length + 40
+      ) + "...";
+  }
+
+  const articleUrl = `https://aimodels.fyi/models/${platform}/${slug}`;
+  const outroMessage = `\n\n[Click here to read the full guide to ${titleModelName}](${articleUrl})`;
+
+  const modifiedSummary = introMessage + truncatedSummary + outroMessage;
 
   const payload = {
     article: {
@@ -35,9 +51,9 @@ async function publishArticleToDev(article) {
       body_markdown: modifiedSummary,
       published: true,
       main_image: example,
-      canonical_url: `https://aimodels.fyi/models/${platform}/${slug}`,
+      canonical_url: articleUrl,
       description: modelName,
-      tags: ["coding, ai, beginners, programming"],
+      tags: ["coding", "ai", "machinelearning", "programming"],
     },
   };
 
