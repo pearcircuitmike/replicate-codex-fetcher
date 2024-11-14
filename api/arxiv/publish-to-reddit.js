@@ -19,26 +19,36 @@ const anthropic = new Anthropic({ apiKey: claudeApiKey });
 
 // Subreddit-specific configurations
 const SUBREDDIT_CONFIG = {
-  // machinelearning: {
-  // prependTag: true,
-  //  requiresFlair: false,
-  //  flairText: null,
-  //  },
-  machinelearningnews: {
-    prependTag: true,
+  ArtificialInteligence: {
+    prependTag: false,
     requiresFlair: true,
-    flairText: "Research",
+    flairText: "Technical",
   },
-  neuralnetworks: {
-    prependTag: false,
-    requiresFlair: false,
-    flairText: null,
-  },
-  ResearchML: {
-    prependTag: false,
-    requiresFlair: false,
-    flairText: null,
-  },
+  // artificial: {
+  //  prependTag: false,
+  //  requiresFlair: true,
+  //  flairText: "Computing",
+  // },
+  // machinelearning: {
+  //  prependTag: true,
+  // requiresFlair: false,
+  //  flairText: null,
+  //},
+  //machinelearningnews: {
+  // prependTag: true,
+  //requiresFlair: true,
+  //flairText: "Research",
+  //},
+  //neuralnetworks: {
+  // prependTag: false,
+  // requiresFlair: false,
+  // flairText: null,
+  //},
+  //ResearchML: {
+  // prependTag: false,
+  //  requiresFlair: false,
+  // flairText: null,
+  // },
 };
 
 const SUBREDDITS = Object.keys(SUBREDDIT_CONFIG);
@@ -319,8 +329,8 @@ async function publishToReddit() {
   const threeDaysAgo = new Date();
   threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
   const threeDaysAgoISO = threeDaysAgo.toISOString();
-  console.log("Fetching papers published after:", threeDaysAgoISO);
 
+  // Get papers for each subreddit
   const { data: papers, error } = await supabase
     .from("arxivPapersData")
     .select("*")
@@ -329,7 +339,7 @@ async function publishToReddit() {
     .gt("totalScore", 0.5)
     .gte("publishedDate", threeDaysAgoISO)
     .order("totalScore", { ascending: false })
-    .limit(5);
+    .limit(SUBREDDITS.length); // Get exactly enough papers for our subreddits
 
   if (error) {
     console.error("Error fetching papers:", error);
@@ -341,17 +351,23 @@ async function publishToReddit() {
     return;
   }
 
-  console.log(`Found ${papers.length} papers to process`);
+  // Post one paper to each subreddit
+  for (let i = 0; i < SUBREDDITS.length; i++) {
+    const subreddit = SUBREDDITS[i];
+    const paper = papers[i];
 
-  for (const paper of papers) {
-    console.log("\n--- Processing paper ---");
+    if (!paper) {
+      console.log(`No paper available for r/${subreddit}, skipping...`);
+      continue;
+    }
+
+    console.log(`\nProcessing paper for r/${subreddit}`);
     console.log("Paper ID:", paper.id);
     console.log("Original title:", paper.title);
     console.log("Score:", paper.totalScore);
 
     const summaryUrl = `https://aimodels.fyi/papers/arxiv/${paper.slug}`;
 
-    // Generate base title without [R] tag
     const baseTitle = await generateRedditTitle(paper.title, paper.abstract);
     if (!baseTitle) {
       console.log(`Skipping paper ${paper.id} - couldn't generate title`);
@@ -371,52 +387,47 @@ async function publishToReddit() {
       continue;
     }
 
-    for (const subreddit of SUBREDDITS) {
-      console.log(`\nPosting to r/${subreddit}...`);
-
-      // Check if we need flair but don't have it
-      if (
-        SUBREDDIT_CONFIG[subreddit].requiresFlair &&
-        !subredditFlairs[subreddit]
-      ) {
-        console.log(`Skipping r/${subreddit} - required flair not found`);
-        continue;
-      }
-
-      const result = await submitRedditPost(
-        subreddit,
-        baseTitle,
-        redditContent,
-        accessToken
-      );
-
-      if (result) {
-        console.log(`Successfully posted to r/${subreddit}`);
-        console.log("Updating database...");
-
-        const { error: updateError } = await supabase
-          .from("arxivPapersData")
-          .update({
-            redditPublishedDate: new Date().toISOString(),
-            lastUpdated: new Date().toISOString(),
-          })
-          .eq("id", paper.id);
-
-        if (updateError) {
-          console.error("Error updating paper status:", updateError);
-        } else {
-          console.log("Database updated successfully");
-        }
-      } else {
-        console.log(`Failed to post to r/${subreddit}`);
-      }
-
-      console.log("Waiting 60 seconds before next subreddit...");
-      await delay(60000);
+    if (
+      SUBREDDIT_CONFIG[subreddit].requiresFlair &&
+      !subredditFlairs[subreddit]
+    ) {
+      console.log(`Skipping r/${subreddit} - required flair not found`);
+      continue;
     }
 
-    console.log(`Waiting ${POST_DELAY / 1000} seconds before next paper...`);
-    await delay(POST_DELAY);
+    const result = await submitRedditPost(
+      subreddit,
+      baseTitle,
+      redditContent,
+      accessToken
+    );
+
+    if (result) {
+      console.log(`Successfully posted to r/${subreddit}`);
+      console.log("Updating database...");
+
+      const { error: updateError } = await supabase
+        .from("arxivPapersData")
+        .update({
+          redditPublishedDate: new Date().toISOString(),
+          lastUpdated: new Date().toISOString(),
+        })
+        .eq("id", paper.id);
+
+      if (updateError) {
+        console.error("Error updating paper status:", updateError);
+      } else {
+        console.log("Database updated successfully");
+      }
+    } else {
+      console.log(`Failed to post to r/${subreddit}`);
+    }
+
+    // Wait between posts if this isn't the last subreddit
+    if (i < SUBREDDITS.length - 1) {
+      console.log("Waiting 60 seconds before next post...");
+      await delay(60000);
+    }
   }
 
   console.log("\nFinished publishing papers to Reddit");
