@@ -17,13 +17,38 @@ const password = process.env.REDDIT_PASSWORD;
 const claudeApiKey = process.env.CLAUDE_API_KEY;
 const anthropic = new Anthropic({ apiKey: claudeApiKey });
 
-const SUBREDDITS = ["machinelearning", "machinelearningnews"];
-//const SUBREDDITS = ["a:t5_7d0c95"];
+// Subreddit-specific configurations
+const SUBREDDIT_CONFIG = {
+  // machinelearning: {
+  // prependTag: true,
+  //  requiresFlair: false,
+  //  flairText: null,
+  //  },
+  machinelearningnews: {
+    prependTag: true,
+    requiresFlair: true,
+    flairText: "Research",
+  },
+  neuralnetworks: {
+    prependTag: false,
+    requiresFlair: false,
+    flairText: null,
+  },
+  ResearchML: {
+    prependTag: false,
+    requiresFlair: false,
+    flairText: null,
+  },
+};
+
+const SUBREDDITS = Object.keys(SUBREDDIT_CONFIG);
 const POST_DELAY = 600000;
 let accessToken = null;
+let subredditFlairs = {};
 
 async function getAccessToken() {
   try {
+    console.log("Attempting to get Reddit access token...");
     const response = await axios.post(
       "https://www.reddit.com/api/v1/access_token",
       `grant_type=password&username=${username}&password=${password}`,
@@ -37,28 +62,85 @@ async function getAccessToken() {
       }
     );
 
+    console.log("Successfully obtained access token");
     return response.data.access_token;
   } catch (error) {
-    console.error("Error getting access token:", error);
+    console.error("Error getting access token:");
+    if (error.response) {
+      console.error("Error Status:", error.response.status);
+      console.error("Error Data:", error.response.data);
+    } else {
+      console.error(error);
+    }
     return null;
+  }
+}
+
+async function getSubredditFlairs(subreddit, accessToken) {
+  try {
+    if (!SUBREDDIT_CONFIG[subreddit].requiresFlair) {
+      return null;
+    }
+
+    console.log(`Fetching flairs for r/${subreddit}...`);
+
+    const response = await axios.get(
+      `https://oauth.reddit.com/r/${subreddit}/api/link_flair_v2`,
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "User-Agent": "aimodelsfyiscript by successful-western27",
+        },
+      }
+    );
+
+    console.log(`Available flairs for r/${subreddit}:`, response.data);
+    return response.data;
+  } catch (error) {
+    console.error(`Error fetching flairs for r/${subreddit}:`, error);
+    return null;
+  }
+}
+
+async function initializeFlairs(accessToken) {
+  for (const subreddit of SUBREDDITS) {
+    if (SUBREDDIT_CONFIG[subreddit].requiresFlair) {
+      const flairs = await getSubredditFlairs(subreddit, accessToken);
+      if (flairs) {
+        const requiredFlair = flairs.find(
+          (flair) => flair.text === SUBREDDIT_CONFIG[subreddit].flairText
+        );
+        if (requiredFlair) {
+          subredditFlairs[subreddit] = requiredFlair.id;
+          console.log(`Found flair ID for r/${subreddit}: ${requiredFlair.id}`);
+        } else {
+          console.error(
+            `Could not find "${SUBREDDIT_CONFIG[subreddit].flairText}" flair for r/${subreddit}`
+          );
+        }
+      }
+    }
   }
 }
 
 async function generateRedditTitle(title, abstract) {
   try {
+    console.log("Generating Reddit title...");
+    console.log("Original title:", title);
+
     const message = await anthropic.messages.create({
       model: "claude-3-5-sonnet-20241022",
       max_tokens: 150,
       messages: [
         {
           role: "user",
-          content: `Create a clear, professional title for an r/machinelearning post about this paper. The title should follow these rules:
-- Start with "[R]" to indicate it's research
+          content: `Create a clear, professional title for an ML research post about this paper. The title should follow these rules:
 - Be concise but descriptive
 - Focus on the key technical contribution or finding
 - Use proper ML terminology
 - Avoid clickbait or sensationalism
 - Don't exceed 300 characters
+- DO NOT include [R] tag - this will be added later if needed
 
 Original title: ${title}
 Abstract: ${abstract}
@@ -68,7 +150,9 @@ Respond with just the title - no explanation or extra text.`,
       ],
     });
 
-    return message.content[0].text.trim();
+    const generatedTitle = message.content[0].text.trim();
+    console.log("Generated title:", generatedTitle);
+    return generatedTitle;
   } catch (error) {
     console.error("Error generating Reddit title:", error);
     return null;
@@ -83,6 +167,8 @@ async function generateRedditPost(
   summaryUrl
 ) {
   try {
+    console.log("Generating Reddit post content...");
+
     const message = await anthropic.messages.create({
       model: "claude-3-5-sonnet-20241022",
       max_tokens: 1000,
@@ -106,32 +192,6 @@ Write a post that follows this structure:
 3. Explain theoretical or practical implications
 4. End with a TLDR and links to paper/summary
 
-Here is an example from another paper - just for illustration
-
-<example>
-I found an interesting analysis of Vision Transformers that reveals how they handle information processing through token recycling.
-
-The key finding is that ViTs repurpose tokens from redundant image patches as temporary computational storage, leading to unintuitive attention patterns.
-
-Technical details:
-* ~2% of tokens exhibit abnormally high vector norms
-* These "outlier" tokens correspond to less salient image regions
-* The high-norm tokens store global rather than local information
-* Adding dedicated register tokens provides explicit computational storage
-
-Results:
-* Models with register tokens show more interpretable attention maps
-* Slight improvements in downstream task performance
-* Significantly better object localization capabilities
-* Minimal computational overhead from architecture modification
-
-The implications for ViT architecture design suggest that explicit computational storage mechanisms could improve both performance and interpretability. This also provides insight into how transformer architectures manage information flow in vision tasks.
-
-**TLDR:** Vision transformers repurpose background tokens for computation. Adding dedicated register tokens improves model behavior.
-
-[Full summary is here](url). Paper [here](url).
-</example>
-
 Remember to:
 - Keep technical accuracy while being accessible
 - Use appropriate ML terminology
@@ -149,24 +209,44 @@ Respond with just the post content - no extra text or explanations.`,
       ],
     });
 
-    return message.content[0].text.trim();
+    const generatedContent = message.content[0].text.trim();
+    console.log("Generated content length:", generatedContent.length);
+    return generatedContent;
   } catch (error) {
     console.error("Error generating Reddit post:", error);
     return null;
   }
 }
 
-async function submitRedditPost(subreddit, title, content, accessToken) {
+async function submitRedditPost(subreddit, baseTitle, content, accessToken) {
   try {
+    console.log(`\nAttempting to post to r/${subreddit}`);
+
+    // Apply subreddit-specific title formatting
+    const config = SUBREDDIT_CONFIG[subreddit];
+    const title = config.prependTag ? `[R] ${baseTitle}` : baseTitle;
+
+    console.log("Final title:", title);
+    console.log("Content length:", content.length);
+
+    // Prepare the post data
+    const postData = {
+      sr: subreddit,
+      kind: "self",
+      title: title,
+      text: content,
+      resubmit: false,
+    };
+
+    // Add flair if required
+    if (config.requiresFlair && subredditFlairs[subreddit]) {
+      postData.flair_id = subredditFlairs[subreddit];
+      console.log(`Adding flair ID: ${subredditFlairs[subreddit]}`);
+    }
+
     const response = await axios.post(
       "https://oauth.reddit.com/api/submit",
-      {
-        sr: subreddit,
-        kind: "self",
-        title: title,
-        text: content,
-        resubmit: false,
-      },
+      postData,
       {
         headers: {
           Authorization: `Bearer ${accessToken}`,
@@ -176,12 +256,42 @@ async function submitRedditPost(subreddit, title, content, accessToken) {
       }
     );
 
+    // Log the full response
+    console.log("\nReddit API Response:", {
+      status: response.status,
+      statusText: response.statusText,
+      data: JSON.stringify(response.data, null, 2),
+      headers: response.headers,
+    });
+
+    // Check for errors in response
+    if (
+      response.data.json &&
+      response.data.json.errors &&
+      response.data.json.errors.length > 0
+    ) {
+      console.error("Reddit API returned errors:", response.data.json.errors);
+      return null;
+    }
+
+    // Log the post URL if available
+    if (response.data.json && response.data.json.data) {
+      const postUrl = `https://reddit.com${response.data.json.data.url}`;
+      console.log("Post successful! URL:", postUrl);
+    }
+
     return response.data;
   } catch (error) {
-    console.error(
-      `Error posting to r/${subreddit}:`,
-      error.response?.data || error
-    );
+    console.error(`Error posting to r/${subreddit}:`);
+    if (error.response) {
+      console.error("Error Status:", error.response.status);
+      console.error("Error Headers:", error.response.headers);
+      console.error("Error Data:", error.response.data);
+    } else if (error.request) {
+      console.error("Request Error:", error.request);
+    } else {
+      console.error("Error:", error.message);
+    }
     return null;
   }
 }
@@ -192,10 +302,24 @@ function delay(ms) {
 
 async function publishToReddit() {
   console.log("Starting Reddit publication process...");
+  console.log("Current time:", new Date().toISOString());
+
+  // Get access token first
+  accessToken = await getAccessToken();
+  if (!accessToken) {
+    console.error("Failed to get Reddit access token");
+    return;
+  }
+  console.log("Successfully obtained Reddit access token");
+
+  // Initialize flairs for all subreddits
+  await initializeFlairs(accessToken);
+
   // Calculate date 3 days ago
   const threeDaysAgo = new Date();
   threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
   const threeDaysAgoISO = threeDaysAgo.toISOString();
+  console.log("Fetching papers published after:", threeDaysAgoISO);
 
   const { data: papers, error } = await supabase
     .from("arxivPapersData")
@@ -217,23 +341,22 @@ async function publishToReddit() {
     return;
   }
 
-  accessToken = await getAccessToken();
-  if (!accessToken) {
-    console.error("Failed to get Reddit access token");
-    return;
-  }
+  console.log(`Found ${papers.length} papers to process`);
 
   for (const paper of papers) {
+    console.log("\n--- Processing paper ---");
+    console.log("Paper ID:", paper.id);
+    console.log("Original title:", paper.title);
+    console.log("Score:", paper.totalScore);
+
     const summaryUrl = `https://aimodels.fyi/papers/arxiv/${paper.slug}`;
 
-    // Generate a new ML-focused title
-    const postTitle = await generateRedditTitle(paper.title, paper.abstract);
-    if (!postTitle) {
+    // Generate base title without [R] tag
+    const baseTitle = await generateRedditTitle(paper.title, paper.abstract);
+    if (!baseTitle) {
       console.log(`Skipping paper ${paper.id} - couldn't generate title`);
       continue;
     }
-
-    console.log(`Generating Reddit post for: ${postTitle}`);
 
     const redditContent = await generateRedditPost(
       paper.generatedSummary,
@@ -249,17 +372,27 @@ async function publishToReddit() {
     }
 
     for (const subreddit of SUBREDDITS) {
-      console.log(`Posting to r/${subreddit}...`);
+      console.log(`\nPosting to r/${subreddit}...`);
+
+      // Check if we need flair but don't have it
+      if (
+        SUBREDDIT_CONFIG[subreddit].requiresFlair &&
+        !subredditFlairs[subreddit]
+      ) {
+        console.log(`Skipping r/${subreddit} - required flair not found`);
+        continue;
+      }
 
       const result = await submitRedditPost(
         subreddit,
-        postTitle,
+        baseTitle,
         redditContent,
         accessToken
       );
 
       if (result) {
         console.log(`Successfully posted to r/${subreddit}`);
+        console.log("Updating database...");
 
         const { error: updateError } = await supabase
           .from("arxivPapersData")
@@ -271,16 +404,22 @@ async function publishToReddit() {
 
         if (updateError) {
           console.error("Error updating paper status:", updateError);
+        } else {
+          console.log("Database updated successfully");
         }
+      } else {
+        console.log(`Failed to post to r/${subreddit}`);
       }
 
+      console.log("Waiting 60 seconds before next subreddit...");
       await delay(60000);
     }
 
+    console.log(`Waiting ${POST_DELAY / 1000} seconds before next paper...`);
     await delay(POST_DELAY);
   }
 
-  console.log("Finished publishing papers to Reddit");
+  console.log("\nFinished publishing papers to Reddit");
 }
 
 async function main() {
@@ -288,6 +427,7 @@ async function main() {
     await publishToReddit();
   } catch (error) {
     console.error("Main process error:", error);
+    console.error("Stack trace:", error.stack);
   }
 }
 
