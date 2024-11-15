@@ -24,31 +24,31 @@ const SUBREDDIT_CONFIG = {
     requiresFlair: true,
     flairText: "Technical",
   },
-  // artificial: {
-  //  prependTag: false,
-  //  requiresFlair: true,
-  //  flairText: "Computing",
-  // },
-  // machinelearning: {
-  //  prependTag: true,
-  // requiresFlair: false,
-  //  flairText: null,
-  //},
-  //machinelearningnews: {
-  // prependTag: true,
-  //requiresFlair: true,
-  //flairText: "Research",
-  //},
-  //neuralnetworks: {
-  // prependTag: false,
-  // requiresFlair: false,
-  // flairText: null,
-  //},
-  //ResearchML: {
-  // prependTag: false,
-  //  requiresFlair: false,
-  // flairText: null,
-  // },
+  artificial: {
+    prependTag: false,
+    requiresFlair: true,
+    flairText: "Computing",
+  },
+  machinelearning: {
+    prependTag: true,
+    requiresFlair: false,
+    flairText: null,
+  },
+  machinelearningnews: {
+    prependTag: true,
+    requiresFlair: true,
+    flairText: "Research",
+  },
+  neuralnetworks: {
+    prependTag: false,
+    requiresFlair: false,
+    flairText: null,
+  },
+  ResearchML: {
+    prependTag: false,
+    requiresFlair: false,
+    flairText: null,
+  },
 };
 
 const SUBREDDITS = Object.keys(SUBREDDIT_CONFIG);
