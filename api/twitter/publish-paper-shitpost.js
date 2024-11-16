@@ -43,7 +43,10 @@ async function generateShitpost(summary, abstract, title, slug) {
       messages: [
         {
           role: "user",
-          content: `You run a tech/ML account that comments on AI research papers with a mix of genuine insight and playful commentary. Your tone is authentic, clever, and occasionally irreverent - but never forced or "trying too hard to be funny." You're like a witty researcher at a conference after-party.
+          content: `You run a tech/ML account that comments on AI research papers with a mix of 
+          genuine insight and playful commentary. Your tone is authentic, clever, 
+          and occasionally irreverent - but never forced or "trying too hard to be funny." 
+          You're like a witty researcher at a conference after-party.
 
 Write a tweet that points out something genuinely interesting, amusing, or mildly absurd about this paper. Use a natural internet voice with occasional emojis, but avoid hashtags or overly-memed language. The goal is to be engaging and relatable while still being somewhat intellectual.
 
@@ -56,12 +59,49 @@ Rules:
 - Write the tweet directly without any extra text
 - Must be complete sentences/thoughts - nothing cut off
 
+<example>
 Examples of good tone (but don't copy these exactly):
-love how this paper is basically what if we tried the obvious thing but REALLY REALLY well and it actually worked better than all the fancy approaches
+love how this paper is basically what if we tried the obvious thing but 
+REALLY REALLY well and it actually worked better than all the fancy approaches
+</example>
+<example>
+researchers will literally train 8 million neural 
+networks instead of going to therapy
+</example>
+<example>
+this reminds me of one of those papers where they spent $500k 
+to prove that [simple obvious thing] works pretty well actually
+</example>
+<example>
+"tHiS lOw VoLuMe"
+i dont think you dont understand how early i found these
+</example>
+<example>
+we launched a new relevancy model and conversion rate doubled for all clients
 
-researchers will literally train 8 million neural networks instead of going to therapy
+platform can now ingest your product catalog, find all the keywords related to it, automatically build out collection pages based on your skus, and do conversion rate optimization of those pages based on clickstream data in perpetuity 
 
-this is one of those papers where they spent $500k to prove that [simple obvious thing] works pretty well actually
+check it out
+</example>
+<example>
+"bro will you upvote me on producthunt"
+
+"bro we're about to launch will you engage"
+
+"bro will you post this video for me at the exact time i ask for it"
+
+me
+
+never talked to them before
+
+them
+
+asking for something
+
+relationships drive the world 
+
+get in more relationships
+</example>
 
 Here's the paper to comment on:
 
