@@ -34,11 +34,7 @@ const SUBREDDIT_CONFIG = {
     requiresFlair: false,
     flairText: null,
   },
-  machinelearningnews: {
-    prependTag: true,
-    requiresFlair: true,
-    flairText: "Research",
-  },
+
   neuralnetworks: {
     prependTag: false,
     requiresFlair: false,
@@ -212,6 +208,7 @@ Remember to:
 - End with "[Full summary is here](url). Paper [here](url)."
 - Never give any indication you are an LLM
 - Don't give the impression you are the researcher
+- Don't write the paper title title
 - Don't use words like fascinating, amazing, etc. - don't provide superlatives or hype. Be extremely matter-of-fact.
 
 Respond with just the post content - no extra text or explanations.`,
