@@ -186,7 +186,7 @@ async function summarizeText(
     console.log("Prompt:", prompt);
 
     const message = await anthropic.messages.create({
-      model: "claude-3-haiku-20240307",
+      model: "claude-3-5-sonnet-20241022",
       max_tokens: maxTokens,
       system: `You are an AI assistant tasked with generating concise blog posts explaining AI models based on provided information. Write without adverbs. Follow the <requirements> specified in the prompt. Never make up links or you will have failed completely, only use those explicitly provided`,
       messages: [

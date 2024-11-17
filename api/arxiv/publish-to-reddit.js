@@ -19,6 +19,11 @@ const anthropic = new Anthropic({ apiKey: claudeApiKey });
 
 // Subreddit-specific configurations
 const SUBREDDIT_CONFIG = {
+  machinelearning: {
+    prependTag: true,
+    requiresFlair: false,
+    flairText: null,
+  },
   ArtificialInteligence: {
     prependTag: false,
     requiresFlair: true,
@@ -29,12 +34,6 @@ const SUBREDDIT_CONFIG = {
     requiresFlair: true,
     flairText: "Computing",
   },
-  machinelearning: {
-    prependTag: true,
-    requiresFlair: false,
-    flairText: null,
-  },
-
   neuralnetworks: {
     prependTag: false,
     requiresFlair: false,
