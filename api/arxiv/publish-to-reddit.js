@@ -194,7 +194,7 @@ Summary URL: ${summaryUrl}
 Write a post that follows this structure:
 1. Start with the key technical contribution/methodology
 2. Break down the main technical points and results using bullet points
-3. Explain theoretical or practical implications
+3. Explain what the impact could be using "I think..." language. Don't say 'the implications are significant, substantial'
 4. End with a TLDR and links to paper/summary
 
 Remember to:

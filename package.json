@@ -38,7 +38,6 @@
     "openai-node": "^1.0.5",
     "p-limit": "^4.0.0",
     "pexels": "^1.4.0",
-    "puppeteer": "^22.12.0",
     "replicate": "^0.12.3",
     "resend": "^4.0.1-alpha.0",
     "rss-parser": "^3.13.0",
