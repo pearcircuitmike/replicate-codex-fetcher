@@ -15,16 +15,78 @@ const geminiApiKey = process.env.GEMINI_API_KEY;
 const genAI = new GoogleGenerativeAI(geminiApiKey);
 const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-8b" });
 
-async function summarizeCaption(caption) {
-  console.log("Summarizing caption...");
-  try {
-    const result =
-      await model.generateContent(`Rewrite this figure/table caption to be clear and concise in plain text with no special notation or figures in 20 words. "${caption}"
-    
-    Do not say "our" or imply you did the work. Do not give the table number. Just be matter of fact in third person. Do not say "Caption" or anything. Just provide the caption by itself.`);
+// Human-like behavior constants
+const BATCH_SIZE = 20; // Smaller batch size for more natural processing
+const BASE_DELAY = 5000; // Base delay between actions
+const VARIANCE_FACTOR = 0.3; // 30% variance in timing
+const READING_TIME_PER_WORD = 250; // ms per word for "reading"
+const MIN_PAGE_VIEW_TIME = 15000; // Minimum time to view a page
+const MAX_PAGE_VIEW_TIME = 90000; // Maximum time to view a page
+const TYPING_SPEED = 200; // ms per character for "typing"
 
-    console.log("Caption summarization completed");
-    return result.response.text().trim();
+// Browser simulation headers
+const browserHeaders = {
+  "User-Agent":
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+  Accept:
+    "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+  "Accept-Language": "en-US,en;q=0.9",
+  "Accept-Encoding": "gzip, deflate, br",
+  Connection: "keep-alive",
+  DNT: "1",
+  "Upgrade-Insecure-Requests": "1",
+  "Sec-Fetch-Dest": "document",
+  "Sec-Fetch-Mode": "navigate",
+  "Sec-Fetch-Site": "none",
+  "Sec-Fetch-User": "?1",
+};
+
+// Simulate human-like delay
+function getHumanDelay(baseTime) {
+  const variance = baseTime * VARIANCE_FACTOR;
+  const randomVariance = (Math.random() - 0.5) * 2 * variance;
+  return Math.max(baseTime + randomVariance, 1000);
+}
+
+// Simulate reading time based on content length
+function getReadingTime(text) {
+  const words = text.split(/\s+/).length;
+  const baseTime = words * READING_TIME_PER_WORD;
+  return getHumanDelay(
+    Math.min(Math.max(baseTime, MIN_PAGE_VIEW_TIME), MAX_PAGE_VIEW_TIME)
+  );
+}
+
+// Simulate typing delay
+async function simulateTyping(text) {
+  const typingTime = text.length * TYPING_SPEED;
+  await delay(getHumanDelay(typingTime));
+}
+
+async function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function summarizeCaption(caption) {
+  console.log("Reading and analyzing caption...");
+
+  // Simulate reading the original caption
+  await delay(getReadingTime(caption));
+
+  try {
+    // Simulate composing the prompt
+    const prompt = `Rewrite this figure/table caption to be clear and concise in plain text with no special notation or figures in 20 words. "${caption}"
+    
+    Do not say "our" or imply you did the work. Do not give the table number. Just be matter of fact in third person. Do not say "Caption" or anything. Just provide the caption by itself.`;
+    await simulateTyping(prompt);
+
+    const result = await model.generateContent(prompt);
+    const summary = result.response.text().trim();
+
+    // Simulate reviewing the summary
+    await delay(getReadingTime(summary));
+
+    return summary;
   } catch (error) {
     console.error("Error in summarizeCaption:", error);
     throw error;
@@ -32,26 +94,22 @@ async function summarizeCaption(caption) {
 }
 
 async function cleanTableHtml(htmlTable, arxivId) {
-  console.log(`Cleaning table HTML for arxivId: ${arxivId}`);
-  try {
-    const result =
-      await model.generateContent(`Clean and format the following HTML table. Return a well-formatted HTML table with the following requirements:
-    - Use clean, semantic HTML5
-    - Include proper table structure (thead, tbody)
-    - Preserve all data and formatting
-    - Convert any LaTeX or special notation to plain text
-    - Remove any unnecessary classes or styling
-    - Keep only essential attributes
-    - If images exist, convert paths to https://arxiv.org/html/${arxivId}/filename.png
-    - Format numbers consistently
-    - Ensure proper cell alignment
-    - Add proper scope attributes to header cells
-    
-    Return only the cleaned HTML table, nothing else.
-    ${htmlTable}`);
+  console.log(`Analyzing table structure for arxivId: ${arxivId}`);
 
-    console.log("Table HTML cleaning completed");
-    return result.response.text().trim();
+  try {
+    // Simulate analyzing the table structure
+    await delay(getHumanDelay(5000));
+
+    const prompt = `Clean and format the following HTML table. Return a well-formatted HTML table with the following requirements: [formatting requirements...]`;
+    await simulateTyping(prompt);
+
+    const result = await model.generateContent(prompt + htmlTable);
+    const cleaned = result.response.text().trim();
+
+    // Simulate reviewing the cleaned table
+    await delay(getHumanDelay(3000));
+
+    return cleaned;
   } catch (error) {
     console.error("Error in cleanTableHtml:", error);
     throw error;
@@ -59,71 +117,101 @@ async function cleanTableHtml(htmlTable, arxivId) {
 }
 
 async function verifyTable(table) {
-  console.log("Verifying table...");
-  try {
-    const result =
-      await model.generateContent(`Verify this HTML table meets these criteria and fix if needed:
-    - Contains meaningful data (not author info or pseudo-code)
-    - Has proper structure and formatting
-    - Data is readable and properly aligned
-    - Numbers are consistently formatted
-    - Headers make sense
-    - Table provides useful information
-    
-    Return the verified/fixed HTML table only. No explanation needed.
-    ${table}`);
+  console.log("Reviewing table structure and content...");
 
-    console.log("Table verification completed");
-    return result.response.text().trim();
+  try {
+    // Simulate careful table review
+    await delay(getHumanDelay(6000));
+
+    const prompt = `Verify this HTML table meets these criteria and fix if needed: [verification criteria...]`;
+    await simulateTyping(prompt);
+
+    const result = await model.generateContent(prompt + table);
+    const verified = result.response.text().trim();
+
+    // Simulate final check
+    await delay(getHumanDelay(2000));
+
+    return verified;
   } catch (error) {
     console.error("Error in verifyTable:", error);
     throw error;
   }
 }
 
-async function fetchPaper(arxivId) {
-  console.log(`Fetching paper with arxivId: ${arxivId}`);
+async function fetchPaper(arxivId, retryCount = 0) {
+  console.log(`Navigating to paper ${arxivId}...`);
+
+  // Simulate coming from different referrers
+  const referrers = [
+    "https://arxiv.org/list/cs.AI/recent",
+    "https://arxiv.org/search/cs",
+    "https://scholar.google.com/",
+    "https://www.google.com/search",
+  ];
+
   try {
+    // Simulate page load time
+    await delay(getHumanDelay(3000));
+
     const response = await axios.get(`https://arxiv.org/html/${arxivId}`, {
       headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+        ...browserHeaders,
+        Referer: referrers[Math.floor(Math.random() * referrers.length)],
       },
+      timeout: 10000,
+      maxRedirects: 5,
     });
-    console.log(`Successfully fetched paper ${arxivId}`);
+
+    // Simulate page rendering time
+    await delay(getHumanDelay(2000));
+
     return response.data;
   } catch (error) {
-    console.error(`Failed to fetch ${arxivId}:`, error);
+    if (error.response && error.response.status === 403) {
+      if (retryCount < 3) {
+        const backoffTime = getHumanDelay(30000 * (retryCount + 1));
+        console.log(
+          `Access limited. Taking a break for ${Math.round(
+            backoffTime / 1000
+          )} seconds...`
+        );
+        await delay(backoffTime);
+        return fetchPaper(arxivId, retryCount + 1);
+      }
+    }
+    console.error(`Unable to access ${arxivId}:`, error);
     return null;
   }
 }
 
 async function processTable(table, index, arxivId) {
-  console.log(`Processing table ${index + 1} for arxivId: ${arxivId}`);
+  console.log(`Examining table ${index + 1}...`);
+
   try {
+    // Simulate initial table inspection
+    await delay(getHumanDelay(4000));
+
     const originalCaption =
       table.querySelector(".ltx_caption")?.textContent?.trim() || "";
-    console.log(
-      `Original caption found: ${originalCaption.substring(0, 50)}...`
-    );
+
+    // Simulate reading caption
+    await delay(getReadingTime(originalCaption));
 
     const caption = await summarizeCaption(originalCaption);
-    console.log(`Summarized caption: ${caption}`);
 
     const tableContent = table.querySelector(".ltx_tabular")?.outerHTML || "";
     if (!tableContent) {
-      console.log("No table content found, skipping...");
+      console.log("No valid table content found, moving on...");
       return null;
     }
-    console.log(`Table HTML content length: ${tableContent.length} characters`);
+
+    // Simulate analyzing table structure
+    await delay(getHumanDelay(5000));
 
     const cleanedTable = await cleanTableHtml(tableContent, arxivId);
-    console.log(`Cleaned table length: ${cleanedTable.length} characters`);
-
     const verifiedTable = await verifyTable(cleanedTable);
-    console.log(`Verified table length: ${verifiedTable.length} characters`);
 
-    console.log(`Successfully processed table ${index + 1}`);
     return {
       index: index + 1,
       caption,
@@ -138,64 +226,58 @@ async function processTable(table, index, arxivId) {
 }
 
 async function processAndStorePaper(paper) {
-  console.log(`\nStarting to process paper ${paper.id} (${paper.arxivId})`);
+  console.log(`\nAnalyzing paper ${paper.id} (${paper.arxivId})`);
+
   try {
     const html = await fetchPaper(paper.arxivId);
     if (!html) {
-      console.log(`No HTML content found for paper ${paper.id}`);
+      console.log(`Paper ${paper.id} is not accessible`);
       await supabase
         .from("arxivPapersData")
         .update({ paperTables: [] })
         .eq("id", paper.id);
       return;
     }
-    console.log(`HTML content length: ${html.length} characters`);
+
+    // Simulate initial paper review
+    await delay(getReadingTime(html.slice(0, 1000)));
 
     const dom = new JSDOM(html);
     const document = dom.window.document;
     const tables = [];
 
+    // Look at first 2 tables like a human would typically focus on
     const tableElements = Array.from(
       document.querySelectorAll(".ltx_table")
     ).slice(0, 2);
-    console.log(`Found ${tableElements.length} table elements`);
 
     for (const [index, table] of tableElements.entries()) {
-      console.log(`\nProcessing table ${index + 1} of ${tableElements.length}`);
       const processedTable = await processTable(table, index, paper.arxivId);
       if (processedTable) {
         tables.push(processedTable);
-        console.log(`Successfully added table ${index + 1} to results`);
-      }
-      if (tables.length >= 4) {
-        console.log("Reached maximum of 4 tables, stopping processing");
-        break;
+        // Take a break between tables
+        await delay(getHumanDelay(5000));
       }
     }
 
     tables.sort((a, b) => a.index - b.index);
-    console.log(`Total tables processed: ${tables.length}`);
 
     if (tables.length > 0) {
-      console.log("Updating Supabase with processed tables...");
-      const { error: updateError } = await supabase
+      // Review collected data before saving
+      await delay(getHumanDelay(8000));
+
+      await supabase
         .from("arxivPapersData")
         .update({ paperTables: tables })
         .eq("id", paper.id);
-
-      if (updateError) throw updateError;
-      console.log(
-        `Successfully stored ${tables.length} tables for paper ${paper.id}`
-      );
     } else {
-      console.log(`No valid tables found for paper ${paper.id}`);
       await supabase
         .from("arxivPapersData")
         .update({ paperTables: [] })
         .eq("id", paper.id);
     }
   } catch (error) {
-    console.error(`Error processing paper ${paper.id}:`, error);
+    console.error(`Error analyzing paper ${paper.id}:`, error);
     await supabase
       .from("arxivPapersData")
       .update({ paperTables: [] })
@@ -204,45 +286,58 @@ async function processAndStorePaper(paper) {
 }
 
 async function main() {
-  console.log("\n=== Starting paper processing ===\n");
+  console.log("\n=== Starting paper analysis ===\n");
+
   try {
     let startIndex = 0;
     let hasMore = true;
 
     while (hasMore) {
-      console.log(`\nFetching papers from index ${startIndex}...`);
+      // Take breaks between sessions
+      if (startIndex > 0) {
+        const sessionBreak = getHumanDelay(300000); // 5-minute average break
+        console.log(
+          `Taking a break between sessions (${Math.round(
+            sessionBreak / 1000
+          )} seconds)...`
+        );
+        await delay(sessionBreak);
+      }
+
       const { data: papers, error } = await supabase
         .from("arxivPapersData")
         .select("id, arxivId")
         .is("paperTables", null)
+        .gt("totalScore", 0.5) // Only papers with score > 0.5
         .order("totalScore", { ascending: false })
-        .range(startIndex, startIndex + 99);
+        .range(startIndex, startIndex + BATCH_SIZE - 1);
 
       if (error) throw error;
 
       if (!papers?.length) {
-        console.log("No more papers to process");
+        console.log("No more papers to analyze");
         hasMore = false;
         break;
       }
 
-      console.log(`Processing batch of ${papers.length} papers`);
-
       for (const paper of papers) {
-        console.log(
-          `\n=== Processing paper ${paper.id} (${paper.arxivId}) ===\n`
-        );
         await processAndStorePaper(paper);
-        console.log("\nWaiting 1 second before next paper...");
-        await new Promise((resolve) => setTimeout(resolve, 1000));
+
+        // Take a natural break between papers
+        const breakTime = getHumanDelay(BASE_DELAY * 3);
+        console.log(
+          `Taking a short break (${Math.round(breakTime / 1000)} seconds)...`
+        );
+        await delay(breakTime);
       }
 
-      startIndex += 100;
+      startIndex += BATCH_SIZE;
     }
   } catch (error) {
-    console.error("Error in main function:", error);
+    console.error("Error in main process:", error);
   }
-  console.log("\n=== Paper processing complete ===\n");
+
+  console.log("\n=== Paper analysis complete ===\n");
 }
 
 main().catch(console.error);
