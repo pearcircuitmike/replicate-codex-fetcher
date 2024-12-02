@@ -10,10 +10,10 @@ const supabase = createClient(
 );
 const resend = new Resend(process.env.RESEND_API_KEY);
 
-function getDateRange(lastSentAt) {
+function getDateRange() {
   const endDate = new Date();
-  const startDate = new Date(lastSentAt || endDate);
-  startDate.setMonth(endDate.getMonth() - 1); // Monthly
+  const startDate = new Date();
+  startDate.setMonth(endDate.getMonth() - 1);
 
   return {
     formatted: `${formatDate(startDate)} - ${formatDate(endDate)}`,
@@ -24,23 +24,6 @@ function getDateRange(lastSentAt) {
   function formatDate(date) {
     return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
   }
-}
-
-async function fetchPaperCountSince(lastSentAt) {
-  const startDate = lastSentAt ? new Date(lastSentAt) : new Date(0);
-  const endDate = new Date();
-
-  const { count, error } = await supabase
-    .from("arxivPapersData")
-    .select("id", { count: "exact" })
-    .gte("indexedDate", startDate.toISOString())
-    .lte("indexedDate", endDate.toISOString());
-
-  if (error) {
-    throw new Error(`Error fetching paper count: ${error.message}`);
-  }
-
-  return count;
 }
 
 async function fetchPaperDetails(paperIds) {
@@ -59,7 +42,21 @@ async function fetchPaperDetails(paperIds) {
   }, {});
 }
 
-async function sendDigestEmail(user, tasks, dateRange) {
+async function fetchPaperCountForPeriod(startDate, endDate) {
+  const { count, error } = await supabase
+    .from("arxivPapersData")
+    .select("id", { count: "exact" })
+    .gte("indexedDate", startDate.toISOString())
+    .lte("indexedDate", endDate.toISOString());
+
+  if (error) {
+    throw new Error(`Error fetching paper count: ${error.message}`);
+  }
+
+  return count;
+}
+
+async function sendDigestEmail(user, tasks, dateRange, papersProcessedCount) {
   const paperIds = new Set();
   tasks.forEach((task) => {
     if (task.top_paper_1) paperIds.add(task.top_paper_1);
@@ -69,9 +66,6 @@ async function sendDigestEmail(user, tasks, dateRange) {
 
   const paperDetails = await fetchPaperDetails([...paperIds]);
   const includedPaperCount = Object.keys(paperDetails).length;
-  const papersProcessedCount = await fetchPaperCountSince(
-    user.last_papers_sent_at
-  );
 
   const tasksListHtml = tasks
     .map(
@@ -167,7 +161,7 @@ async function sendDigestEmail(user, tasks, dateRange) {
         <div style="font-size: 16px; color: #000000;">
           <p style="margin: 0 0 15px 0;">AImodels.fyi is here to keep you up to date with the research you care about! Here's what we've processed:</p>
           <ul style="margin: 0; padding: 0 0 0 20px; color: #000000;">
-            <li style="margin-bottom: 10px;">We reviewed <strong>${papersProcessedCount}</strong> papers since your last digest</li>
+            <li style="margin-bottom: 10px;">We reviewed <strong>${papersProcessedCount}</strong> papers in the last month</li>
             <li style="margin-bottom: 10px;">You're following <strong>${tasks.length}</strong> tasks</li>
             <li style="margin-bottom: 10px;">Based on your interestes, there are <strong>${includedPaperCount}</strong> summaries you should check out.</li>
           </ul>
@@ -258,11 +252,21 @@ async function main() {
         continue;
       }
 
+      const dateRange = getDateRange();
+      const papersProcessedCount = await fetchPaperCountForPeriod(
+        dateRange.startDate,
+        dateRange.endDate
+      );
+
       const tasks = followedTaskUsers.filter(
         (task) => task.user_id === user.user_id
       );
-      const dateRange = getDateRange(user.last_papers_sent_at);
-      await sendDigestEmail(user.profiles, tasks, dateRange);
+      await sendDigestEmail(
+        user.profiles,
+        tasks,
+        dateRange,
+        papersProcessedCount
+      );
 
       const { error: updateError } = await supabase
         .from("digest_subscriptions")
