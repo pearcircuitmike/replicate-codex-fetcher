@@ -1,8 +1,7 @@
-// choose-paper-tasks.js
-
 import { createClient } from "@supabase/supabase-js";
 import dotenv from "dotenv";
 import OpenAI from "openai";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 dotenv.config();
 
@@ -11,20 +10,78 @@ const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
 const supabase = createClient(supabaseUrl, supabaseKey);
 
+// Initialize Gemini
+const geminiApiKey = process.env.GEMINI_API_KEY;
+const genAI = new GoogleGenerativeAI(geminiApiKey);
+const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-8b" });
+
 // Initialize OpenAI client
 const openaiApiKey = process.env.OPENAI_SECRET_KEY;
 const openai = new OpenAI({
   apiKey: openaiApiKey,
-  organization: process.env.OPENAI_ORG_ID, // Optional: if you have an organization ID
 });
 
-// Utility function to introduce delays (to prevent rate limiting)
-const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+// Constants
+const RATE_LIMIT_DELAY = 200; // 200ms between API calls
+const BATCH_SIZE = 1000; // Process 1000 papers at a time
 
-/**
- * Fetch all tasks from the tasks table.
- * @returns {Promise<Array>} Array of task objects with id and task name.
- */
+async function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function categorizePaper(paper, tasksList) {
+  const { title, abstract, generatedSummary } = paper;
+
+  try {
+    const prompt = {
+      contents: [
+        {
+          role: "user",
+          parts: [
+            {
+              text: `You are an expert AI/ML research assistant that categorizes research papers into predefined tasks.
+
+**Paper Details:**
+Title: ${title}
+Abstract: ${abstract}
+
+Summary: ${generatedSummary}
+
+**Available Tasks:**
+${tasksList.join("\n")}
+
+**Instructions:**
+Based on the title, summary and abstract, list all relevant tasks from the above list that apply to this paper. Provide only the task names, each on a new line.
+
+**Response Format:**
+- Task Name 1
+- Task Name 2
+- ...`,
+            },
+          ],
+        },
+      ],
+    };
+
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const taskNamesText = response.text().trim();
+
+    // Apply rate limiting
+    await delay(RATE_LIMIT_DELAY);
+
+    const taskNames = taskNamesText
+      .split("\n")
+      .map((line) => line.replace(/^-?\s*/, "").trim())
+      .filter((name) => name.length > 0);
+
+    return taskNames;
+  } catch (error) {
+    console.error("Error categorizing paper:", error);
+    return [];
+  }
+}
+
 async function fetchTasks() {
   const { data: tasks, error } = await supabase
     .from("tasks")
@@ -38,77 +95,6 @@ async function fetchTasks() {
   return tasks;
 }
 
-/**
- * Categorize a paper using OpenAI's GPT model based on the generated summary.
- * @param {Object} paper - The paper object containing title and generatedSummary.
- * @param {Array} tasksList - Array of task names.
- * @returns {Promise<Array>} Array of relevant task names.
- */
-async function categorizePaper(paper, tasksList) {
-  const { title, abstract, generatedSummary } = paper;
-
-  const prompt = `
-You are an expert AI/ML research assistant that categorizes research papers into predefined tasks.
-
-**Paper Details:**
-Title: ${title}
-Abstract: ${abstract}
-
-Summary: ${generatedSummary}
-
-**Available Tasks:**
-${tasksList.join("\n")}
-
-**Instructions:**
-Based on the title and summary and astract, list all relevant tasks from the above list that apply to this paper. Provide only the task names, each on a new line.
-
-**Response Format:**
-- Task Name 1
-- Task Name 2
-- ...
-`;
-
-  // Log the prompt for debugging
-  console.log(
-    "=== Categorization Prompt ===\n",
-    prompt,
-    "\n============================\n"
-  );
-
-  try {
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o",
-      messages: [{ role: "user", content: prompt }],
-      max_tokens: 150,
-      temperature: 0.3,
-    });
-
-    // Log the entire response for debugging
-    console.log(
-      "=== OpenAI Response ===\n",
-      JSON.stringify(response, null, 2),
-      "\n=======================\n"
-    );
-
-    const taskNamesText = response.choices[0].message.content.trim();
-    const taskNames = taskNamesText
-      .split("\n")
-      .map((line) => line.replace(/^-?\s*/, "").trim())
-      .filter((name) => name.length > 0);
-
-    return taskNames;
-  } catch (error) {
-    console.error("Error categorizing paper:", error.message);
-    return [];
-  }
-}
-
-/**
- * Map task names to their corresponding UUIDs.
- * @param {Array} taskNames - Array of task names.
- * @param {Array} allTasks - Array of all task objects with id and task name.
- * @returns {Array} Array of task UUIDs.
- */
 function mapTaskNamesToIds(taskNames, allTasks) {
   const taskIdMap = new Map();
   allTasks.forEach((task) => {
@@ -122,78 +108,93 @@ function mapTaskNamesToIds(taskNames, allTasks) {
   return taskIds;
 }
 
-/**
- * Assign task_ids to each paper in the arxivPapersData table based on the generatedSummary.
- */
+async function processPaperBatch(papers, tasksList, allTasks) {
+  for (const paper of papers) {
+    try {
+      const taskNames = await categorizePaper(paper, tasksList);
+      if (taskNames.length === 0) {
+        console.log(`No relevant tasks found for paper ${paper.id}.`);
+        continue;
+      }
+
+      const taskIds = mapTaskNamesToIds(taskNames, allTasks);
+      if (taskIds.length === 0) {
+        console.log(`No valid task IDs found for paper ${paper.id}.`);
+        continue;
+      }
+
+      const { error: updateError } = await supabase
+        .from("arxivPapersData")
+        .update({ task_ids: taskIds })
+        .eq("id", paper.id);
+
+      if (updateError) {
+        console.error(
+          `Error updating tasks for paper ${paper.id}:`,
+          updateError.message
+        );
+      } else {
+        console.log(`Successfully updated tasks for paper ${paper.id}.`);
+      }
+
+      // Apply rate limiting between papers
+      await delay(RATE_LIMIT_DELAY);
+    } catch (error) {
+      console.error(`Error processing paper ${paper.id}:`, error);
+    }
+  }
+}
+
 async function assignTasksToPapers() {
-  // Fetch all tasks once
   const allTasks = await fetchTasks();
   if (allTasks.length === 0) {
     console.error("No tasks available to assign.");
     return;
   }
 
-  // Extract task names for categorization
   const tasksList = allTasks.map((task) => task.task);
 
-  // Fetch papers that need task assignment
-  const { data: papers, error } = await supabase
-    .from("arxivPapersData")
-    .select("id, title, abstract, generatedSummary, task_ids")
-    .is("task_ids", null)
-    .not("generatedSummary", "is", null) // Ensure summary exists
-    .order("indexedDate", { ascending: false }); // Order by indexedDate descending
+  let processedCount = 0;
+  let hasMore = true;
 
-  if (error) {
-    console.error("Error fetching papers:", error.message);
-    return;
-  }
-
-  console.log(`Found ${papers.length} papers to process.`);
-
-  for (const paper of papers) {
-    const { id, title, generatedSummary } = paper;
-
-    // Skip papers without title or generatedSummary
-    if (!title || !generatedSummary) {
-      console.log(`Skipping paper ${id} due to missing title or summary.`);
-      continue;
-    }
-
-    // Categorize the paper
-    const taskNames = await categorizePaper(paper, tasksList);
-    if (taskNames.length === 0) {
-      console.log(`No relevant tasks found for paper ${id}.`);
-      continue;
-    }
-
-    // Map task names to UUIDs
-    const taskIds = mapTaskNamesToIds(taskNames, allTasks);
-    if (taskIds.length === 0) {
-      console.log(`No valid task IDs found for paper ${id}.`);
-      continue;
-    }
-
-    // Update the paper with the task_ids
-    const { error: updateError } = await supabase
+  while (hasMore) {
+    const { data: papers, error } = await supabase
       .from("arxivPapersData")
-      .update({ task_ids: taskIds })
-      .eq("id", id);
+      .select("id, title, abstract, generatedSummary, task_ids")
+      .is("task_ids", null)
+      .not("generatedSummary", "is", null)
+      .range(processedCount, processedCount + BATCH_SIZE - 1);
 
-    if (updateError) {
-      console.error(
-        `Error updating tasks for paper ${id}:`,
-        updateError.message
-      );
-    } else {
-      console.log(`Successfully updated tasks for paper ${id}.`);
+    if (error) {
+      console.error("Error fetching papers:", error.message);
+      return;
     }
 
-    // Delay to prevent rate limiting
-    await delay(1000);
+    if (!papers || papers.length === 0) {
+      console.log("No more papers to process");
+      hasMore = false;
+      break;
+    }
+
+    console.log(
+      `Processing batch of ${papers.length} papers starting at index ${processedCount}`
+    );
+    await processPaperBatch(papers, tasksList, allTasks);
+
+    processedCount += papers.length;
+
+    // If we got fewer papers than the batch size, we've reached the end
+    if (papers.length < BATCH_SIZE) {
+      hasMore = false;
+    }
+
+    // Apply rate limiting between batches
+    await delay(RATE_LIMIT_DELAY);
   }
 
-  console.log("Task assignment process completed.");
+  console.log(
+    `Task assignment process completed. Processed ${processedCount} papers total.`
+  );
 }
 
 // Execute the task assignment

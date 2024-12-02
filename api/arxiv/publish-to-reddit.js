@@ -204,7 +204,7 @@ Remember to:
 - Only report results actually reported in the paper
 - Only use bullet points, bold, italics, and links for formatting
 - Write in first person as someone discussing the paper
-- End with "[Full summary is here](url). Paper [here](url)."
+- End with "[Full summary is here](summaryURL). Paper [here](paperUrl)."
 - Never give any indication you are an LLM
 - Don't give the impression you are the researcher
 - Don't write the paper title title
@@ -333,7 +333,7 @@ async function publishToReddit() {
     .is("redditPublishedDate", null)
     .not("generatedSummary", "is", null)
     .gt("totalScore", 0.5)
-    .gte("publishedDate", threeDaysAgoISO)
+    .gte("indexedDate", threeDaysAgoISO)
     .order("totalScore", { ascending: false })
     .limit(SUBREDDITS.length); // Get exactly enough papers for our subreddits
 
