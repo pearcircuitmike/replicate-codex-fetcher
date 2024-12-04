@@ -10,9 +10,14 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 const replicateApiKey = process.env.REPLICATE_API_KEY;
 
 async function updateModelRuns(model) {
-  console.log(`Updating runs for model: ${model.creator}/${model.modelName}`);
+  console.log(
+    `Updating runs for model: ${model.creator}/${model.modelName} (ID: ${model.id})`
+  );
 
   try {
+    console.log(
+      `Fetching data from Replicate API for model: ${model.creator}/${model.modelName}`
+    );
     const response = await axios.get(
       `https://api.replicate.com/v1/models/${model.creator}/${model.modelName}`,
       {
@@ -22,12 +27,15 @@ async function updateModelRuns(model) {
       }
     );
 
+    const runCount = response.data.run_count || 0;
     const currentTimestamp = new Date().toISOString();
+    console.log(`Fetched run count: ${runCount}`);
 
+    console.log(`Updating database for model ID: ${model.id}`);
     const { error: updateError } = await supabase
       .from("modelsData")
       .update({
-        replicateScore: response.data.run_count,
+        replicateScore: runCount,
         lastUpdated: currentTimestamp,
       })
       .eq("platform", "replicate")
@@ -35,19 +43,20 @@ async function updateModelRuns(model) {
 
     if (updateError) {
       console.error(
-        `Failed to update runs for model ${model.creator}/${model.modelName} due to:`,
+        `Failed to update runs for model ${model.creator}/${model.modelName} (ID: ${model.id}) due to:`,
         updateError
       );
     } else {
       console.log(
-        `Successfully updated runs and lastUpdated for model ${model.creator}/${model.modelName}`
+        `Successfully updated replicateScore and lastUpdated for model: ${model.creator}/${model.modelName} (ID: ${model.id})`
       );
     }
   } catch (error) {
     console.error(
-      `Failed to fetch model ${model.creator}/${model.modelName} from API due to:`,
+      `Failed to fetch data for model ${model.creator}/${model.modelName} from Replicate API due to:`,
       error.message
     );
+    console.error(`Error details:`, error.response?.data || error);
   }
 }
 
@@ -59,6 +68,10 @@ export async function updateRuns() {
   let hasMoreData = true;
 
   while (hasMoreData) {
+    console.log(
+      `Fetching models from database (start: ${start}, limit: ${limit})`
+    );
+
     const {
       data: models,
       error: fetchError,
@@ -78,15 +91,28 @@ export async function updateRuns() {
       return;
     }
 
-    console.log(`Found ${models.length} models to update.`);
+    console.log(
+      `Query returned ${models.length} models out of total ${count}.`
+    );
+    console.log(
+      `Models retrieved: ${JSON.stringify(
+        models.map((m) => m.id),
+        null,
+        2
+      )}`
+    );
 
     if (models.length > 0) {
+      console.log(`Updating ${models.length} models...`);
       const updatePromises = models.map((model) => updateModelRuns(model));
       await Promise.all(updatePromises);
+    } else {
+      console.log("No models found in this batch.");
     }
 
     start += limit;
     hasMoreData = start < count;
+    console.log(`Pagination: start=${start}, hasMoreData=${hasMoreData}`);
   }
 
   console.log("Finished updating model runs.");
