@@ -32,7 +32,7 @@ const runScript = (scriptPath) => {
 };
 
 // Schedule the scripts to run every day at 6:05 AM
-cron.schedule("37 1 * * *", async () => {
+cron.schedule("05 06 * * *", async () => {
   if (isScriptRunning) {
     logWithTimestamp("Scripts are already running. Skipping execution.");
     return;
