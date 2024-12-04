@@ -11,40 +11,40 @@ function logWithTimestamp(message) {
   console.log(`[${timestamp}] ${message}`);
 }
 
-// Wrap each function call with logging
+// Execute a single operation with guaranteed completion
+async function executeOperation(name, operation) {
+  logWithTimestamp(`Starting ${name}...`);
+  try {
+    const result = await Promise.resolve(operation());
+    await new Promise((resolve) => setTimeout(resolve, 1000)); // Force 1 second delay between operations
+    logWithTimestamp(`Completed ${name}.`);
+    return result;
+  } catch (error) {
+    logWithTimestamp(`Failed ${name}: ${error.message}`);
+    throw error;
+  }
+}
+
+// Sequential execution of all updates
 async function runAllUpdates() {
   try {
     logWithTimestamp("Starting runAllUpdates...");
 
-    logWithTimestamp("Starting updateRuns...");
-    await updateRuns();
-    logWithTimestamp("Completed updateRuns.");
-
-    logWithTimestamp("Starting updateGithubScore...");
-    await updateGithubScore();
-    logWithTimestamp("Completed updateGithubScore.");
-
-    logWithTimestamp("Starting fetchNewModels...");
-    await fetchNewModels();
-    logWithTimestamp("Completed fetchNewModels.");
-
-    logWithTimestamp("Starting generateTags...");
-    await generateTags();
-    logWithTimestamp("Completed generateTags.");
-
-    logWithTimestamp("Starting createEmbeddings...");
-    await createEmbeddings();
-    logWithTimestamp("Completed createEmbeddings.");
-
-    logWithTimestamp("Starting generateSummary...");
-    await generateSummary();
-    logWithTimestamp("Completed generateSummary.");
+    // Execute each operation in strict sequence
+    await executeOperation("updateRuns", updateRuns);
+    await executeOperation("updateGithubScore", updateGithubScore);
+    await executeOperation("fetchNewModels", fetchNewModels);
+    await executeOperation("generateTags", generateTags);
+    await executeOperation("createEmbeddings", createEmbeddings);
+    await executeOperation("generateSummary", generateSummary);
 
     logWithTimestamp("All updates completed successfully.");
   } catch (error) {
     logWithTimestamp(`Error occurred: ${error.message}`);
-    console.error(error); // Log the full error stack for debugging
+    console.error(error);
+    process.exit(1); // Exit with error code on failure
   }
 }
 
+// Run the updates
 runAllUpdates();
