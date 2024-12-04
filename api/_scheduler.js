@@ -32,7 +32,7 @@ const runScript = (scriptPath) => {
 };
 
 // Schedule the scripts to run every day at 6:05 AM
-cron.schedule("05 06 * * *", async () => {
+cron.schedule("34 0 * * *", async () => {
   if (isScriptRunning) {
     logWithTimestamp("Scripts are already running. Skipping execution.");
     return;
@@ -42,6 +42,14 @@ cron.schedule("05 06 * * *", async () => {
   logWithTimestamp("Running scheduled scripts...");
 
   try {
+    // Replicate update scripts
+    await runScript("api/replicate/update-runs.js");
+    await runScript("api/replicate/update-github-score.js");
+    await runScript("api/replicate/fetch-new-models.js");
+    await runScript("api/replicate/generate-tags.js");
+    await runScript("api/replicate/create-embeddings.js");
+    await runScript("api/replicate/generate-summary.js");
+
     // Original scripts
     await runScript("api/arxiv/fetch-new-papers.js");
     await runScript("api/arxiv/create-embeddings.js");
@@ -55,14 +63,6 @@ cron.schedule("05 06 * * *", async () => {
 
     // New scripts
     await runScript("api/twitter/publish-paper-greentext.js");
-
-    // Replicate update scripts
-    await runScript("api/replicate/update-runs.js");
-    await runScript("api/replicate/update-github-score.js");
-    await runScript("api/replicate/fetch-new-models.js");
-    await runScript("api/replicate/generate-tags.js");
-    await runScript("api/replicate/create-embeddings.js");
-    await runScript("api/replicate/generate-summary.js");
 
     await runScript("api/huggingFace/call-all-functions.js");
     await runScript("api/huggingFace/publish-to-devto.js");
