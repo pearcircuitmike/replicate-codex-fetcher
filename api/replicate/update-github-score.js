@@ -20,14 +20,8 @@ async function updateModelGithubScore(model) {
     console.log(`GitHub API URL: ${apiUrl}`);
 
     const response = await axios.get(apiUrl);
-    console.log(`GitHub API response status: ${response.status}`);
-    console.log(`GitHub API response data:`, response.data);
-
     const stargazersCount = response.data.stargazers_count;
-    console.log(`Stargazers count: ${stargazersCount}`);
-
     const currentTimestamp = new Date().toISOString();
-    console.log(`Current timestamp: ${currentTimestamp}`);
 
     const { error: updateError } = await supabase
       .from("modelsData")
@@ -52,27 +46,15 @@ async function updateModelGithubScore(model) {
       `Failed to fetch GitHub data for model ${model.id} due to:`,
       error.message
     );
-
     if (error.response) {
       console.error("Error response data:", error.response.data);
       console.error("Error response status:", error.response.status);
       console.error("Error response headers:", error.response.headers);
-
-      if (error.response.status === 404) {
-        console.error(
-          `Invalid GitHub URL for model ${model.id}: ${model.githubUrl}`
-        );
-      }
-    } else if (error.request) {
-      console.error("Error request:", error.request);
-    } else {
-      console.error("Error:", error.message);
     }
-
     console.error("Error config:", error.config);
   }
 
-  // Add a delay of 1000ms (1 second) between each API request
+  // Add a delay between requests
   await new Promise((resolve) => setTimeout(resolve, 1000));
 }
 
@@ -82,7 +64,6 @@ export async function updateGithubScore() {
   const limit = 1000;
   let hasMoreData = true;
 
-  // Calculate the date 7 days ago
   const sevenDaysAgo = new Date();
   sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
@@ -90,6 +71,7 @@ export async function updateGithubScore() {
     console.log(
       `Fetching models from the database (start: ${start}, limit: ${limit})...`
     );
+
     const {
       data: models,
       error: fetchError,
@@ -107,8 +89,8 @@ export async function updateGithubScore() {
       return;
     }
 
-    console.log(`Found ${models.length} models to update.`);
-    if (models.length > 0) {
+    if (models && models.length > 0) {
+      console.log(`Processing ${models.length} models...`);
       for (const model of models) {
         await updateModelGithubScore(model);
       }
@@ -116,10 +98,12 @@ export async function updateGithubScore() {
 
     start += limit;
     hasMoreData = start < count;
-    console.log(`Has more data: ${hasMoreData}`);
+    console.log(
+      `Progress: processed up to ${start}, hasMoreData: ${hasMoreData}`
+    );
   }
+
   console.log("Finished updating GitHub scores.");
 }
 
-// Automatically call updateGithubScore when this script is executed
 updateGithubScore();

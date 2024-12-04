@@ -55,7 +55,15 @@ cron.schedule("05 06 * * *", async () => {
 
     // New scripts
     await runScript("api/twitter/publish-paper-greentext.js");
-    await runScript("api/replicate/run-all-replicate-updates.js");
+
+    // Replicate update scripts
+    await runScript("api/replicate/update-runs.js");
+    await runScript("api/replicate/update-github-score.js");
+    await runScript("api/replicate/fetch-new-models.js");
+    await runScript("api/replicate/generate-tags.js");
+    await runScript("api/replicate/create-embeddings.js");
+    await runScript("api/replicate/generate-summary.js");
+
     await runScript("api/huggingFace/call-all-functions.js");
     await runScript("api/huggingFace/publish-to-devto.js");
     await runScript("api/loops/update-loops-contacts.js");

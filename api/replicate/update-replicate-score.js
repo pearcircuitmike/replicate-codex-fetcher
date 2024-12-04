@@ -91,32 +91,22 @@ export async function updateRuns() {
       return;
     }
 
-    console.log(
-      `Query returned ${models.length} models out of total ${count}.`
-    );
-    console.log(
-      `Models retrieved: ${JSON.stringify(
-        models.map((m) => m.id),
-        null,
-        2
-      )}`
-    );
-
-    if (models.length > 0) {
-      console.log(`Updating ${models.length} models...`);
-      const updatePromises = models.map((model) => updateModelRuns(model));
-      await Promise.all(updatePromises);
-    } else {
-      console.log("No models found in this batch.");
+    if (models && models.length > 0) {
+      console.log(`Processing ${models.length} models...`);
+      for (const model of models) {
+        // Changed to sequential processing
+        await updateModelRuns(model);
+      }
     }
 
     start += limit;
     hasMoreData = start < count;
-    console.log(`Pagination: start=${start}, hasMoreData=${hasMoreData}`);
+    console.log(
+      `Progress: processed up to ${start}, hasMoreData: ${hasMoreData}`
+    );
   }
 
   console.log("Finished updating model runs.");
 }
 
-// Automatically call updateRuns when this script is executed
 updateRuns();
