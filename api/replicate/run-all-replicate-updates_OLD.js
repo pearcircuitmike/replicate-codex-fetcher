@@ -1,7 +1,7 @@
 import { fetchNewModels } from "./fetch-new-models.js";
 import { generateTags } from "./generate-tags.js";
 import { generateSummary } from "./generate-summary.js";
-import { updateRuns } from "./update-replicate-score.js";
+import { updateRuns } from "./update-runs.js";
 import { createEmbeddings } from "./create-embeddings.js";
 import { updateGithubScore } from "./update-github-score.js";
 
