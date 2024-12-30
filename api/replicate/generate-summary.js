@@ -181,7 +181,7 @@ async function summarizeText(
 
     <requirements>
     - Use clear, direct language and avoid complex terminology
-    - Write in the active voice and use proper Markdown syntax
+    - Write in the active voice and use proper Markdown syntax. Links must be of the form [linked text](linkurl). Do not include any special characters in the linked text.
     - Avoid adverbs and buzzwords, opting for plain English instead
     - Use relevant jargon sparingly
     - Do not speculate or make false claims
@@ -228,12 +228,12 @@ async function summarizeText(
     </output>
 
     Verify all Urls provided in links are contained within this prompt before responding, and that all writing is in a clear non-repetitive natural style.
-    `;
+       DO NOT SAY HERE'S A BLOG POST OR ANYTHING LIKE THAT - NO PREMABLE, JUST THE GENERATED RESULT IN THE PROPER FORMAT.    `;
 
     console.log("Prompt:", prompt);
 
     const message = await anthropic.messages.create({
-      model: "claude-3-haiku-20240307",
+      model: "claude-3-5-sonnet-20241022",
       max_tokens: maxTokens,
       system: `You are an AI assistant tasked with generating concise blog posts explaining AI models based on provided information. Write without adverbs. Follow the <requirements> specified in the prompt. Never make up links or you will have failed completely, only use those explicitly provided`,
       messages: [

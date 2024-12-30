@@ -42,7 +42,9 @@ cron.schedule("05 06 * * *", async () => {
   logWithTimestamp("Running scheduled scripts...");
 
   try {
+    // -------------------------
     // Replicate update scripts
+    // -------------------------
     await runScript("api/replicate/update-runs.js");
     await runScript("api/replicate/update-github-score.js");
     await runScript("api/replicate/fetch-new-models.js");
@@ -50,7 +52,9 @@ cron.schedule("05 06 * * *", async () => {
     await runScript("api/replicate/create-embeddings.js");
     await runScript("api/replicate/generate-summary.js");
 
-    // Original scripts
+    // -------------------------
+    // Arxiv scripts
+    // -------------------------
     await runScript("api/arxiv/fetch-new-papers.js");
     await runScript("api/arxiv/create-embeddings.js");
     await runScript("api/arxiv/update-hn-score.js");
@@ -61,9 +65,10 @@ cron.schedule("05 06 * * *", async () => {
     await runScript("api/arxiv/publish-to-hashnode.js");
     await runScript("api/arxiv/choose-paper-tasks.js");
 
-    // New scripts
+    // -------------------------
+    // Additional new scripts
+    // -------------------------
     await runScript("api/twitter/publish-paper-greentext.js");
-
     await runScript("api/huggingFace/call-all-functions.js");
     await runScript("api/huggingFace/publish-to-devto.js");
     await runScript("api/loops/update-loops-contacts.js");
@@ -72,6 +77,18 @@ cron.schedule("05 06 * * *", async () => {
     await runScript("api/site/models-of-the-week.js");
     await runScript("api/twitter/publish-paper-tweet.js");
     await runScript("api/twitter/publish-model-tweet.js");
+
+    // ----------------------------------------
+    // Clean and regenerate summaries (new step)
+    // ----------------------------------------
+    await runScript("api/replicate/clean-and-regenerate-summaries.js");
+    await runScript("api/huggingFace/clean-and-regenerate-summaries.js");
+
+    // --------------------------------------------------------
+    // Finally, call the revalidation scripts for papers/models
+    // --------------------------------------------------------
+    await runScript("api/arxiv/revalidate-papers.js");
+    await runScript("api/replicate/revalidate-models.js");
 
     logWithTimestamp("All scheduled scripts completed successfully.");
   } catch (error) {
