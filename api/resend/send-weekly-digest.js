@@ -10,10 +10,14 @@ const supabase = createClient(
 );
 const resend = new Resend(process.env.RESEND_API_KEY);
 
+/**
+ * For the email content, we gather papers from the last 7 days.
+ * This does NOT control which users get emailed (that's the day-based logic below).
+ */
 function getDateRange() {
   const endDate = new Date();
   const startDate = new Date();
-  startDate.setDate(endDate.getDate() - 7); // Weekly
+  startDate.setDate(endDate.getDate() - 7); // last 7 days for content
 
   return {
     formatted: `${formatDate(startDate)} - ${formatDate(endDate)}`,
@@ -56,6 +60,9 @@ async function fetchPaperCountForPeriod(startDate, endDate) {
   return count;
 }
 
+/**
+ * Sends the weekly digest email to one user.
+ */
 async function sendDigestEmail(user, tasks, dateRange, papersProcessedCount) {
   const paperIds = new Set();
   tasks.forEach((task) => {
@@ -70,9 +77,9 @@ async function sendDigestEmail(user, tasks, dateRange, papersProcessedCount) {
   const tasksListHtml = tasks
     .map(
       (task, index) =>
-        `<li style="margin-bottom: 10px; color: #000000">${index + 1}. ${
-          task.task_name || "Unknown Task"
-        }</li>`
+        `<li style="margin-bottom: 10px; color: #000000">
+          ${index + 1}. ${task.task_name || "Unknown Task"}
+        </li>`
     )
     .join("");
 
@@ -87,10 +94,12 @@ async function sendDigestEmail(user, tasks, dateRange, papersProcessedCount) {
       if (papers.length === 0) {
         return `
           <div style="margin: 20px 0; padding: 20px 25px; border: 2px solid #eaeaea; border-radius: 5px;">
-            <h2 style="color: #000000; font-size: 16px; font-weight: bold; margin: 0;">${
-              task.task_name || "Unknown Task"
-            }</h2>
-            <p style="color: #666666; margin: 10px 0 0 0; font-style: italic;">No papers available for this task.</p>
+            <h2 style="color: #000000; font-size: 16px; font-weight: bold; margin: 0;">
+              ${task.task_name || "Unknown Task"}
+            </h2>
+            <p style="color: #666666; margin: 10px 0 0 0; font-style: italic;">
+              No papers available for this task.
+            </p>
           </div>
         `;
       }
@@ -103,7 +112,7 @@ async function sendDigestEmail(user, tasks, dateRange, papersProcessedCount) {
             ? paper.authors.join(", ")
             : "Unknown author";
           const abstract = paper.abstract
-            ? `${paper.abstract.split(" ").slice(0, 30).join(" ")}...`
+            ? paper.abstract.split(" ").slice(0, 30).join(" ") + "..."
             : "No abstract available";
 
           return `
@@ -112,17 +121,19 @@ async function sendDigestEmail(user, tasks, dateRange, papersProcessedCount) {
                  style="color: #0070f3; text-decoration: none; font-weight: bold; font-size: 14px;">
                 ${title}
               </a>
-              <div style="color: #666666; font-size: 14px; margin: 5px 0;">${authors}</div>
+              <div style="color: #666666; font-size: 14px; margin: 5px 0;">
+                ${authors}
+              </div>
               <div style="color: #454545; font-size: 14px; margin-top: 10px; line-height: 1.4;">
                 ${abstract}
                 ${
                   slug !== "#"
                     ? `<div style="margin-top: 10px;">
-                      <a href="https://aimodels.fyi/papers/arxiv/${slug}" 
-                         style="color: #0070f3; text-decoration: none; font-size: 14px;">
-                         Read more →
-                      </a>
-                     </div>`
+                        <a href="https://aimodels.fyi/papers/arxiv/${slug}"
+                           style="color: #0070f3; text-decoration: none; font-size: 14px;">
+                          Read more →
+                        </a>
+                       </div>`
                     : ""
                 }
               </div>
@@ -133,15 +144,16 @@ async function sendDigestEmail(user, tasks, dateRange, papersProcessedCount) {
 
       return `
         <div style="margin: 20px 0; padding: 20px 25px; border: 2px solid #eaeaea; border-radius: 5px;">
-          <h2 style="color: #000000; font-size: 16px; font-weight: bold; margin: 0;">${
-            task.task_name || "Unknown Task"
-          }</h2>
+          <h2 style="color: #000000; font-size: 16px; font-weight: bold; margin: 0;">
+            ${task.task_name || "Unknown Task"}
+          </h2>
           <div style="margin-top: 15px;">${papersHtml}</div>
         </div>
       `;
     })
     .join("");
 
+  // The overall HTML
   const emailHtml = `
     <div style="font-family: 'Geist', Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #ffffff;">
       <div style="padding: 20px 25px; margin-bottom: 20px; background-color: #ffebee; border-radius: 5px;">
@@ -153,44 +165,68 @@ async function sendDigestEmail(user, tasks, dateRange, papersProcessedCount) {
 
       <div style="padding: 20px 25px 10px 25px;">
         <div style="text-align: left;">
-          <h1 style="color: #000000; font-size: 16px; margin: 0;">Your AI Research Update (${dateRange.formatted})</h1>
+          <h1 style="color: #000000; font-size: 16px; margin: 0;">
+            Your AI Research Update (${dateRange.formatted})
+          </h1>
         </div>
       </div>
 
       <div style="margin: 20px 25px; padding: 20px 25px; border: 2px solid #eaeaea; border-radius: 5px;">
         <div style="font-size: 16px; color: #000000;">
-          <p style="margin: 0 0 15px 0;">AImodels.fyi is here to keep you up to date with the research you care about! Here's what we've processed:</p>
+          <p style="margin: 0 0 15px 0;">
+            AImodels.fyi is here to keep you up to date with the research you care about!
+            Here's what we've processed:
+          </p>
           <ul style="margin: 0; padding: 0 0 0 20px; color: #000000;">
-            <li style="margin-bottom: 10px;">We reviewed <strong>${papersProcessedCount}</strong> papers in the last week</li>
-            <li style="margin-bottom: 10px;">You're following <strong>${tasks.length}</strong> tasks</li>
-            <li style="margin-bottom: 10px;">Based on your interestes, there are <strong>${includedPaperCount}</strong> summaries you should check out.</li>
+            <li style="margin-bottom: 10px;">
+              We reviewed <strong>${papersProcessedCount}</strong> papers in the last week
+            </li>
+            <li style="margin-bottom: 10px;">
+              You're following <strong>${tasks.length}</strong> tasks
+            </li>
+            <li style="margin-bottom: 10px;">
+              Based on your interests, there are <strong>${includedPaperCount}</strong> summaries you should check out.
+            </li>
           </ul>
         </div>
       </div>
 
       <div style="padding: 0 25px;">
         <div style="margin: 20px 0;">
-          <p style="font-size: 16px; color: #000000; margin: 0 0 15px 0;"><strong>You're currently following these topics:</strong></p>
+          <p style="font-size: 16px; color: #000000; margin: 0 0 15px 0;">
+            <strong>You're currently following these topics:</strong>
+          </p>
           <ul style="margin: 0; padding: 0 0 0 20px;">
             ${tasksListHtml}
           </ul>
         </div>
-        <p style="color: #000000;">You can adjust your tasks in your <a href="https://www.aimodels.fyi/dashboard" style="color: #0070f3; text-decoration: none;">dashboard</a>.</p>
+        <p style="color: #000000;">
+          You can adjust your tasks in your 
+          <a href="https://www.aimodels.fyi/dashboard" style="color: #0070f3; text-decoration: none;">
+            dashboard
+          </a>.
+        </p>
       </div>
 
       ${tasksHtml}
 
       <div style="padding: 20px 25px; text-align: center; font-size: 12px; color: #454545; margin-top: 20px; border-top: 1px solid #eaeaea;">
         <p style="margin: 0 0 10px 0;">
-          <a href="https://www.aimodels.fyi/account" style="color: #454545; text-decoration: none;">Manage email preferences</a> | 
+          <a href="https://www.aimodels.fyi/account" style="color: #454545; text-decoration: none;">
+            Manage email preferences
+          </a> | 
         </p>
-        <p style="margin: 0;">AIModels.FYI • Copyright © 2024</p>
+        <p style="margin: 0;">
+          AIModels.FYI • Copyright © 2024
+        </p>
       </div>
     </div>
   `;
 
+  // Send via Resend
   return resend.emails.send({
     from: "Mike Young <mike@mail.aimodels.fyi>",
+    replyTo: ["mike@aimodels.fyi"],
     to: [user.email],
     cc: ["mike@aimodels.fyi"],
     subject: `Your AI Research Update (${dateRange.formatted})`,
@@ -201,22 +237,30 @@ async function sendDigestEmail(user, tasks, dateRange, papersProcessedCount) {
 async function main() {
   console.log("Starting weekly digest job...");
   const now = new Date();
-  const cutoffDate = new Date(now);
-  cutoffDate.setDate(cutoffDate.getDate() - 7);
+
+  // Instead of "older than 7 days in hours," we do a day-based check:
+  // We'll compare last_papers_sent_at to the start of (today minus 7 days).
+  // So if last_papers_sent_at < that date (or is NULL), the user is eligible.
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0); // midnight today
+  startOfToday.setDate(startOfToday.getDate() - 7); // go back 7 days
 
   try {
+    // Step 1: fetch tasks
     const { data: followedTaskUsers, error: taskUsersError } = await supabase
       .from("live_user_tasks_with_top_papers")
       .select("*");
-
     if (taskUsersError) {
       throw new Error(`Error fetching task users: ${taskUsersError.message}`);
     }
 
+    // Gather all user_ids who have tasks
     const followedUserIds = [
       ...new Set(followedTaskUsers.map((row) => row.user_id)),
     ];
 
+    // Step 2: find users whose papers_frequency=weekly
+    // and last_papers_sent_at < startOfToday or is null
     const { data: users, error: userError } = await supabase
       .from("digest_subscriptions")
       .select(
@@ -235,7 +279,7 @@ async function main() {
         "substack",
       ])
       .or(
-        `last_papers_sent_at.is.null,last_papers_sent_at.lt.${cutoffDate.toISOString()}`
+        `last_papers_sent_at.is.null,last_papers_sent_at.lt.${startOfToday.toISOString()}`
       );
 
     if (userError) {
@@ -252,15 +296,19 @@ async function main() {
         continue;
       }
 
+      // For the email content itself, we fetch papers from the last 7 days
       const dateRange = getDateRange();
       const papersProcessedCount = await fetchPaperCountForPeriod(
         dateRange.startDate,
         dateRange.endDate
       );
 
+      // Filter tasks for this user
       const tasks = followedTaskUsers.filter(
         (task) => task.user_id === user.user_id
       );
+
+      // Send the email
       await sendDigestEmail(
         user.profiles,
         tasks,
@@ -268,6 +316,7 @@ async function main() {
         papersProcessedCount
       );
 
+      // Update last_papers_sent_at so we don't send again this week
       const { error: updateError } = await supabase
         .from("digest_subscriptions")
         .update({ last_papers_sent_at: now.toISOString() })
@@ -289,6 +338,7 @@ async function main() {
   }
 }
 
+// Execute main function
 main().catch((error) => {
   console.error("Unhandled error:", error);
   process.exit(1);

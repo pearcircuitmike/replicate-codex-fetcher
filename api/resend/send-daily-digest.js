@@ -10,6 +10,10 @@ const supabase = createClient(
 );
 const resend = new Resend(process.env.RESEND_API_KEY);
 
+/**
+ * Create a Date range for the last 24 hours, to fetch relevant papers.
+ * This is just for the email content. It doesn't control who gets emailed.
+ */
 function getDateRange() {
   const endDate = new Date();
   const startDate = new Date();
@@ -52,7 +56,6 @@ async function fetchPaperCountForPeriod(startDate, endDate) {
   if (error) {
     throw new Error(`Error fetching paper count: ${error.message}`);
   }
-
   return count;
 }
 
@@ -191,6 +194,7 @@ async function sendDigestEmail(user, tasks, dateRange, papersProcessedCount) {
 
   return resend.emails.send({
     from: "Mike Young <mike@mail.aimodels.fyi>",
+    replyTo: ["mike@aimodels.fyi"],
     to: [user.email],
     cc: ["mike@aimodels.fyi"],
     subject: `Your AI Research Update (${dateRange.formatted})`,
@@ -201,18 +205,22 @@ async function sendDigestEmail(user, tasks, dateRange, papersProcessedCount) {
 async function main() {
   console.log("Starting daily digest job...");
   const now = new Date();
-  const cutoffDate = new Date(now);
-  cutoffDate.setDate(cutoffDate.getDate() - 1);
+
+  // Instead of a "24-hr cutoffDate," we check if last_papers_sent_at is before today's midnight
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0); // midnight today
 
   try {
+    // Fetch tasks
     const { data: followedTaskUsers, error: taskUsersError } = await supabase
       .from("live_user_tasks_with_top_papers")
       .select("*");
-
     if (taskUsersError) {
       throw new Error(`Error fetching task users: ${taskUsersError.message}`);
     }
 
+    // We'll only send to users with "daily" frequency,
+    // and last_papers_sent_at is NULL or < startOfToday.
     const followedUserIds = [
       ...new Set(followedTaskUsers.map((row) => row.user_id)),
     ];
@@ -235,7 +243,7 @@ async function main() {
         "substack",
       ])
       .or(
-        `last_papers_sent_at.is.null,last_papers_sent_at.lt.${cutoffDate.toISOString()}`
+        `last_papers_sent_at.is.null,last_papers_sent_at.lt.${startOfToday.toISOString()}`
       );
 
     if (userError) {
@@ -252,15 +260,19 @@ async function main() {
         continue;
       }
 
+      // This is just for the email content (papers from last 24 hrs).
       const dateRange = getDateRange();
       const papersProcessedCount = await fetchPaperCountForPeriod(
         dateRange.startDate,
         dateRange.endDate
       );
 
+      // Gather tasks for this user
       const tasks = followedTaskUsers.filter(
         (task) => task.user_id === user.user_id
       );
+
+      // Send the email
       await sendDigestEmail(
         user.profiles,
         tasks,
@@ -268,6 +280,7 @@ async function main() {
         papersProcessedCount
       );
 
+      // Update last_papers_sent_at to "now"
       const { error: updateError } = await supabase
         .from("digest_subscriptions")
         .update({ last_papers_sent_at: now.toISOString() })
@@ -289,6 +302,7 @@ async function main() {
   }
 }
 
+// Execute the main function
 main().catch((error) => {
   console.error("Unhandled error:", error);
   process.exit(1);
