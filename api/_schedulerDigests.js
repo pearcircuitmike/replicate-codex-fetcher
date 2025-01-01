@@ -39,10 +39,10 @@ async function runAllDigests() {
   console.log("Starting daily + weekly digests...");
   try {
     // 1) Daily script
-    await runScript("resend/dailyDigest.js");
+    await runScript("resend/send-daily-digest.js");
 
     // 2) Weekly script
-    await runScript("resend/weeklyDigest.js");
+    await runScript("resend/send-weekly-digest.js");
 
     console.log("All digest scripts finished.");
   } catch (err) {
@@ -59,6 +59,4 @@ cron.schedule("45 13 * * *", () => {
 });
 
 // Initial log
-console.log(
-  "Digest scheduler started (/_schedulerDigests.js). Will run daily + weekly at 13:45 UTC."
-);
+console.log("Digest scheduler started. Will run daily + weekly at 13:45 UTC.");
