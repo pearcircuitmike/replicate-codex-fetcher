@@ -12,6 +12,7 @@ function runScript(scriptPath) {
     child.stdout.on("data", (data) => {
       process.stdout.write(`[${scriptPath}] ${data}`);
     });
+
     child.stderr.on("data", (data) => {
       process.stderr.write(`[${scriptPath}] ${data}`);
     });
@@ -39,10 +40,10 @@ async function runAllDigests() {
   console.log("Starting daily + weekly digests...");
   try {
     // 1) Daily script
-    await runScript("resend/send-daily-digest.js");
+    await runScript("api/resend/send-daily-digest.js");
 
     // 2) Weekly script
-    await runScript("resend/send-weekly-digest.js");
+    await runScript("api/resend/send-weekly-digest.js");
 
     console.log("All digest scripts finished.");
   } catch (err) {
@@ -52,7 +53,8 @@ async function runAllDigests() {
   }
 }
 
-// Schedule: run each day at 13:45 UTC (8:45 AM ET in Standard Time)
+// Schedule: run each day at 13:45 UTC
+// (8:45 AM ET Standard Time, or 9:45 AM ET during Daylight Saving)
 cron.schedule("45 13 * * *", () => {
   console.log("13:45 UTC reached. Starting daily + weekly digests...");
   runAllDigests();
