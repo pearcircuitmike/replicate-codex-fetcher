@@ -10,7 +10,14 @@ const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-const rssParser = new Parser();
+// Configure custom fields to capture arXiv-specific data
+const rssParser = new Parser({
+  customFields: {
+    item: [
+      ["arxiv:announce_type", "announceType"], // store <arxiv:announce_type> in item.announceType
+    ],
+  },
+});
 
 const categories = ["cs", "eess"];
 
@@ -67,30 +74,43 @@ function generateSlug(title) {
     .replace(/^-+|-+$/g, "");
   return slug.split("-").slice(0, 7).join("-");
 }
-async function checkAndUpsertPaper(data, arxivCategories, pubDate) {
-  const currentDate = new Date();
-  const lastUpdated = currentDate.toISOString();
-  const publishedDate = pubDate.toISOString();
-  const arxivId = extractArxivId(data.link);
 
+function isAnnounceTypeNew(item) {
+  // item.announceType was set by the customFields parser config
+  if (!item.announceType) return false;
+  const announceType = item.announceType.trim().toLowerCase();
+  return announceType === "new" || announceType === "replace-cross";
+}
+
+async function checkAndInsertPaperIfNew(data, arxivCategories, pubDate) {
+  if (!isAnnounceTypeNew(data)) {
+    console.log(
+      `Skipping paper "${sanitizeValue(
+        data.title
+      )}" because its announceType is not "new" or "replace-cross".`
+    );
+    return;
+  }
+
+  const arxivId = extractArxivId(data.link);
   if (!arxivId) {
     console.error(`Failed to extract arxivId from URL: ${data.link}`);
     return;
   }
 
-  // Check if the paper has at least one of the allowed categories
-  const hasAllowedCategory = arxivCategories.some((category) =>
-    allowedCategories.includes(category)
+  const hasAllowedCategory = arxivCategories.some((cat) =>
+    allowedCategories.includes(cat)
   );
   if (!hasAllowedCategory) {
     console.log(
       `Skipping paper "${sanitizeValue(
         data.title
-      )}" as it does not have any of the allowed categories.`
+      )}" because it does not have an allowed category.`
     );
     return;
   }
 
+  // Check if this paper already exists
   const { data: existingPaper, error: selectError } = await supabase
     .from("arxivPapersData")
     .select("id")
@@ -105,6 +125,18 @@ async function checkAndUpsertPaper(data, arxivCategories, pubDate) {
     return;
   }
 
+  if (existingPaper) {
+    console.log(
+      `Paper "${sanitizeValue(data.title)}" already exists. Skipping.`
+    );
+    return;
+  }
+
+  // Insert new paper
+  const currentDate = new Date();
+  const lastUpdated = currentDate.toISOString();
+  const publishedDate = pubDate.toISOString();
+
   const abstract = sanitizeValue(
     data.contentSnippet.split("Abstract: ")[1] || ""
   );
@@ -114,57 +146,30 @@ async function checkAndUpsertPaper(data, arxivCategories, pubDate) {
   const pdfUrl = generatePdfUrl(arxivId);
   const slug = generateSlug(data.title);
 
-  if (existingPaper) {
-    const { error: updateError } = await supabase
-      .from("arxivPapersData")
-      .update({
-        lastUpdated: lastUpdated,
-        abstract: abstract,
-        authors: authors,
-        paperUrl: sanitizeValue(data.link),
-        pdfUrl: pdfUrl,
-        publishedDate: publishedDate,
-        arxivCategories: arxivCategories.map(sanitizeValue),
-        slug: slug,
-      })
-      .eq("id", existingPaper.id);
+  const { error: insertError } = await supabase.from("arxivPapersData").insert([
+    {
+      title: sanitizeValue(data.title),
+      arxivCategories: arxivCategories.map(sanitizeValue),
+      abstract: abstract,
+      authors: authors,
+      paperUrl: sanitizeValue(data.link),
+      pdfUrl: pdfUrl,
+      publishedDate: publishedDate,
+      lastUpdated: lastUpdated,
+      indexedDate: lastUpdated,
+      arxivId: arxivId,
+      slug: slug,
+      platform: "arxiv",
+    },
+  ]);
 
-    if (updateError) {
-      console.error(
-        `Failed to update paper "${sanitizeValue(data.title)}":`,
-        updateError
-      );
-    } else {
-      console.log(`Updated paper "${sanitizeValue(data.title)}"`);
-    }
+  if (insertError) {
+    console.error(
+      `Failed to insert paper "${sanitizeValue(data.title)}":`,
+      insertError
+    );
   } else {
-    const { error: insertError } = await supabase
-      .from("arxivPapersData")
-      .insert([
-        {
-          title: sanitizeValue(data.title),
-          arxivCategories: arxivCategories.map(sanitizeValue),
-          abstract: abstract,
-          authors: authors,
-          paperUrl: sanitizeValue(data.link),
-          pdfUrl: pdfUrl,
-          publishedDate: publishedDate,
-          lastUpdated: lastUpdated,
-          indexedDate: lastUpdated,
-          arxivId: arxivId,
-          slug: slug,
-          platform: "arxiv",
-        },
-      ]);
-
-    if (insertError) {
-      console.error(
-        `Failed to insert paper "${sanitizeValue(data.title)}":`,
-        insertError
-      );
-    } else {
-      console.log(`Inserted paper "${sanitizeValue(data.title)}"`);
-    }
+    console.log(`Inserted new paper "${sanitizeValue(data.title)}"`);
   }
 }
 
@@ -176,7 +181,7 @@ async function fetchPapersFromRSS(category) {
     );
     console.log(`Found ${feed.items.length} papers in category "${category}"`);
 
-    const pubDate = new Date(feed.pubDate); // Parse the pubDate from the feed
+    const pubDate = new Date(feed.pubDate);
 
     for (const item of feed.items) {
       const arxivCategories = item.categories.filter(
@@ -186,7 +191,7 @@ async function fetchPapersFromRSS(category) {
           cat.startsWith("stat.ML")
       );
       if (arxivCategories.length > 0) {
-        await checkAndUpsertPaper(item, arxivCategories, pubDate); // Pass the pubDate to the function
+        await checkAndInsertPaperIfNew(item, arxivCategories, pubDate);
       }
     }
 
