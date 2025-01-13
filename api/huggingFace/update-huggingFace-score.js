@@ -69,7 +69,7 @@ export async function updateLikes() {
       .eq("platform", "huggingFace")
       .gte(
         "indexedDate",
-        new Date(new Date().getTime() - 30 * 24 * 60 * 60 * 1000).toISOString()
+        new Date(new Date().getTime() - 14 * 24 * 60 * 60 * 1000).toISOString()
       )
       .range(start, start + limit - 1);
 
