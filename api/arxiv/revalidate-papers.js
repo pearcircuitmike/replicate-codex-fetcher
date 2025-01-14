@@ -14,10 +14,16 @@ const secret = process.env.MY_SECRET_TOKEN;
 
 async function main() {
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+
+  console.log("[revalidate-papers] since =", since);
+
   const { data, error } = await supabase
     .from("arxivPapersData")
     .select("slug, platform")
     .gte("lastUpdated", since);
+
+  console.log("Rows fetched for revalidation:", data);
+
   if (error) {
     console.error("Error:", error.message);
     process.exit(1);
@@ -27,6 +33,10 @@ async function main() {
     process.exit(0);
   }
   for (const { slug, platform } of data) {
+    console.log(
+      `[revalidate-papers] Attempting revalidate for slug=${slug}, platform=${platform}`
+    );
+
     const path = `/papers/${platform}/${slug}`;
     try {
       const url = `${siteUrl}/api/revalidate?secret=${secret}&path=${encodeURIComponent(
