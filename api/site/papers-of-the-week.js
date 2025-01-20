@@ -58,7 +58,7 @@ async function getPapersOfTheWeek() {
 
   // Store the markdown content in the database
   const { data, error: insertError } = await supabase
-    .from("weekly_summaries")
+    .from("weekly_summaries_papers")
     .insert({ weekly_summary: markdownContent });
 
   if (insertError) {
