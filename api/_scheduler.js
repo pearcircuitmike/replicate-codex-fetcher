@@ -56,6 +56,7 @@ cron.schedule("05 06 * * *", async () => {
     // Arxiv scripts
     // -------------------------
     await runScript("api/arxiv/fetch-new-papers.js");
+    await runScript("api/arxiv/clean-authors.js");
     await runScript("api/arxiv/create-embeddings.js");
     await runScript("api/arxiv/update-hn-score.js");
     await runScript("api/arxiv/update-reddit-score.js");
