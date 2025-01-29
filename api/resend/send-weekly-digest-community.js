@@ -41,13 +41,22 @@ function renderEmptyCommunitySection(communityName) {
   `;
 }
 
+/**
+ * Same authors logic as daily:
+ * If more than 3 authors, show first 3 and "and others"
+ */
 function renderCommunitySection(communityName, papers) {
   const papersHtml = papers
     .map((paper) => {
       const title = paper.title || "Untitled Paper";
-      const authors = Array.isArray(paper.authors)
-        ? paper.authors.join(", ")
-        : "Unknown author";
+      const authorsArr = Array.isArray(paper.authors) ? paper.authors : [];
+      let authorsString = "";
+      if (authorsArr.length > 3) {
+        authorsString = authorsArr.slice(0, 3).join(", ") + ", and others";
+      } else {
+        authorsString = authorsArr.join(", ") || "Unknown author";
+      }
+
       const shortAbstract = paper.abstract
         ? paper.abstract.split(" ").slice(0, 30).join(" ") + "..."
         : "No abstract";
@@ -65,7 +74,7 @@ function renderCommunitySection(communityName, papers) {
           </a>
           ${scoreText}
           <div style="font-size: 14px; color: #666; margin-top: 5px;">
-            ${authors}
+            ${authorsString}
           </div>
           <p style="font-size: 14px; color: #444; margin-top: 8px; line-height: 1.4;">
             ${shortAbstract}
@@ -174,7 +183,7 @@ async function generateSubjectLine(paperDetails, dateRange) {
       max_tokens: 60,
       system: `You are an AI that writes a single short subject line for a research digest email.
 Never add extra text or disclaimers.
-Avoid exclamations, adverbs, or buzzwords.
+Avoid exclamations or extra fluff.
 Output only one sentence under 90 characters.
 Maintain a calm, clear tone. Be factual.`,
       messages: [

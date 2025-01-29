@@ -49,15 +49,21 @@ function renderEmptyCommunitySection(communityName) {
 }
 
 /**
- * Renders top 3 papers for a community, always showing "• X pts".
+ * Renders top 3 papers for a community, **restricting authors to 3**.
  */
 function renderCommunitySection(communityName, papers) {
   const papersHtml = papers
     .map((paper) => {
       const title = paper.title || "Untitled Paper";
-      const authors = Array.isArray(paper.authors)
-        ? paper.authors.join(", ")
-        : "Unknown author";
+      const authorsArr = Array.isArray(paper.authors) ? paper.authors : [];
+      let authorsString = "";
+      if (authorsArr.length > 3) {
+        // first 3 and "and others"
+        authorsString = authorsArr.slice(0, 3).join(", ") + ", and others";
+      } else {
+        authorsString = authorsArr.join(", ") || "Unknown author";
+      }
+
       const shortAbstract = paper.abstract
         ? paper.abstract.split(" ").slice(0, 30).join(" ") + "..."
         : "No abstract";
@@ -75,7 +81,7 @@ function renderCommunitySection(communityName, papers) {
           </a>
           ${scoreText}
           <div style="font-size: 14px; color: #666; margin-top: 5px;">
-            ${authors}
+            ${authorsString}
           </div>
           <p style="font-size: 14px; color: #444; margin-top: 8px; line-height: 1.4;">
             ${shortAbstract}
@@ -315,8 +321,6 @@ async function main() {
   let page = 0;
 
   while (true) {
-    // We join digest_subscriptions => profiles => community_members => communities
-    // so each row has an array of "profiles.community_members".
     const { data: pageRows, error: rowErr } = await supabase
       .from("digest_subscriptions")
       .select(
