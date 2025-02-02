@@ -11,9 +11,15 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 const bearerToken = process.env.TWITTER_BEARER_TOKEN;
 const endpointUrl = "https://api.twitter.com/2/tweets/search/recent";
 
-async function getTwitterDataForPaper(paperUrl, paperId) {
+async function getTwitterDataForPaper(arxivId, paperId) {
+  if (!arxivId) {
+    // If no arXiv ID is found, return an empty array
+    return [];
+  }
+
+  // Build the query using the arXiv ID, ignoring retweets
   const params = new URLSearchParams({
-    query: `url:"${paperUrl}" -is:retweet`,
+    query: `url:"${arxivId}" -is:retweet`,
     "tweet.fields": "public_metrics,author_id",
     "user.fields": "username",
     expansions: "author_id",
@@ -36,29 +42,32 @@ async function getTwitterDataForPaper(paperUrl, paperId) {
     const data = await response.json();
     console.log("Twitter API Response:", JSON.stringify(data, null, 2));
 
-    if (data.meta.result_count > 0) {
-      const tweetData = data.data.map((tweet) => ({
-        paper_id: paperId,
-        tweet_text: tweet.text,
-        tweet_id: tweet.id,
-        username: data.includes.users.find(
-          (user) => user.id === tweet.author_id
-        ).username,
-        retweet_count: tweet.public_metrics.retweet_count,
-        reply_count: tweet.public_metrics.reply_count,
-        like_count: tweet.public_metrics.like_count,
-        quote_count: tweet.public_metrics.quote_count,
-        bookmark_count: tweet.public_metrics.bookmark_count,
-        impression_count: tweet.public_metrics.impression_count,
-      }));
+    if (data.meta && data.meta.result_count > 0 && data.data) {
+      const tweetData = data.data.map((tweet) => {
+        const user = data.includes.users.find((u) => u.id === tweet.author_id);
+        return {
+          paper_id: paperId,
+          tweet_text: tweet.text,
+          tweet_id: tweet.id,
+          username: user ? user.username : null,
+          retweet_count: tweet.public_metrics.retweet_count,
+          reply_count: tweet.public_metrics.reply_count,
+          like_count: tweet.public_metrics.like_count,
+          quote_count: tweet.public_metrics.quote_count,
+          bookmark_count: tweet.public_metrics.bookmark_count,
+          impression_count: tweet.public_metrics.impression_count,
+        };
+      });
 
       return tweetData;
     } else {
-      console.log(`No tweets found for ${paperUrl}`);
+      console.log(`No tweets found for arXiv ID ${arxivId}`);
       return [];
     }
   } catch (error) {
-    console.error(`Error searching for tweets: ${error}`);
+    console.error(
+      `Error searching for tweets with arXiv ID ${arxivId}: ${error}`
+    );
     return [];
   }
 }
@@ -68,9 +77,8 @@ async function logAndUpdateTwitterData() {
 
   const { data: papers, error } = await supabase
     .from("arxivPapersData")
-    .select("id, paperUrl, title, totalScore")
+    .select("id, paperUrl, title, totalScore, arxivId")
     .gte("indexedDate", weekAgo)
-    .gt("totalScore", 0.1)
     .order("totalScore", { ascending: false })
     .limit(10);
 
@@ -80,11 +88,11 @@ async function logAndUpdateTwitterData() {
   }
 
   for (const paper of papers) {
-    const { id, paperUrl, title } = paper;
-    const tweetData = await getTwitterDataForPaper(paperUrl, id);
+    const { id, arxivId, paperUrl, title } = paper;
+    const tweetData = await getTwitterDataForPaper(arxivId, id);
 
     console.log(
-      `Paper ID: ${id}, Title: ${title}, URL: ${paperUrl}, Tweets found: ${tweetData.length}`
+      `Paper ID: ${id}, Title: ${title}, arXiv ID: ${arxivId}, URL: ${paperUrl}, Tweets found: ${tweetData.length}`
     );
 
     if (tweetData.length > 0) {

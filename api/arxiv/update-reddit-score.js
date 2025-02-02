@@ -46,8 +46,12 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function fetchRedditScore(paperUrl) {
+async function fetchRedditScore(arxivId) {
   try {
+    if (!arxivId) {
+      return 0;
+    }
+
     if (!accessToken) {
       accessToken = await getAccessToken();
       if (!accessToken) {
@@ -56,12 +60,8 @@ async function fetchRedditScore(paperUrl) {
       }
     }
 
-    console.log("Paper URL:", paperUrl);
-    const encodedUrl = encodeURIComponent(paperUrl);
-    console.log("Encoded URL:", encodedUrl);
-
-    const apiUrl = `https://oauth.reddit.com/search.json?q=${encodedUrl}&limit=10&sort=top`;
-    console.log("API URL:", apiUrl);
+    const encodedId = encodeURIComponent(arxivId);
+    const apiUrl = `https://oauth.reddit.com/search.json?q=${encodedId}&limit=10&sort=top`;
 
     const response = await axios.get(apiUrl, {
       headers: {
@@ -70,15 +70,10 @@ async function fetchRedditScore(paperUrl) {
       },
     });
 
-    console.log("Access Token:", accessToken);
-    console.log("Encoded URL:", encodedUrl);
-    console.log("Request Headers:", response.headers);
-    console.log("Reddit API response status:", response.status);
-
     if (response.status === 200) {
       const data = response.data;
-      console.log("Reddit API response data:", data);
-
+      // Your original code tries to handle data as if it might be an array, but by default
+      // Reddit returns an object. We'll leave it as-is to stick to the minimal changes.
       if (data && Array.isArray(data)) {
         let totalScore = 0;
         for (const listing of data) {
@@ -99,14 +94,16 @@ async function fetchRedditScore(paperUrl) {
         }
         return totalScore;
       }
-      console.log("No valid listings found.");
       return 0;
     } else {
       console.error("Reddit API request failed with status:", response.status);
       return null;
     }
   } catch (error) {
-    console.error(`Failed to fetch Reddit score for ${paperUrl}:`, error);
+    console.error(
+      `Failed to fetch Reddit score for arXiv ID ${arxivId}:`,
+      error
+    );
     return null;
   }
 }
@@ -120,7 +117,8 @@ async function updateRedditScore() {
   while (hasMoreData) {
     const { data: papers, error } = await supabase
       .from("arxivPapersData")
-      .select("id, paperUrl")
+      // Fetch the arxivId and paperUrl so we can log them
+      .select("id, arxivId, paperUrl")
       .gte(
         "publishedDate",
         new Date(Date.now() - 4 * 24 * 60 * 60 * 1000).toISOString()
@@ -138,11 +136,15 @@ async function updateRedditScore() {
     } else {
       console.log(`Processing ${papers.length} papers...`);
       for (const paper of papers) {
-        const { id, paperUrl } = paper;
-        console.log(`Fetching Reddit score for paper "${paperUrl}"...`);
-        const redditScore = await fetchRedditScore(paperUrl);
+        const { id, arxivId, paperUrl } = paper;
+
         console.log(
-          `Updating Reddit score for paper "${paperUrl}" to ${redditScore}...`
+          `Fetching Reddit score for paper "${paperUrl}" (arXiv ID: ${arxivId})...`
+        );
+        const redditScore = await fetchRedditScore(arxivId);
+
+        console.log(
+          `Updating Reddit score for "${paperUrl}" (arXiv ID: ${arxivId}) to ${redditScore}...`
         );
         const { error: updateError } = await supabase
           .from("arxivPapersData")
@@ -160,7 +162,7 @@ async function updateRedditScore() {
           );
         }
 
-        // Delay for 867 milliseconds to stay within the rate limit
+        // Delay for 867 ms to respect rate limits
         await delay(867);
       }
       start += limit;

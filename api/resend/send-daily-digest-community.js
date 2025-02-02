@@ -314,8 +314,8 @@ async function main() {
   const now = new Date();
   const dateRange = getDailyDateRange();
 
-  const startOfDay = new Date();
-  startOfDay.setHours(0, 0, 0, 0);
+  // Updated to use exact 24-hour comparison
+  const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
 
   const pageSize = 1000;
   let page = 0;
@@ -339,7 +339,7 @@ async function main() {
       )
       .eq("papers_frequency", "daily")
       .or(
-        `last_communities_sent_at.is.null,last_communities_sent_at.lt.${startOfDay.toISOString()}`
+        `last_communities_sent_at.is.null,last_communities_sent_at.lt.${oneDayAgo.toISOString()}`
       )
       .range(page * pageSize, (page + 1) * pageSize - 1);
 
@@ -363,28 +363,24 @@ async function main() {
         continue;
       }
 
-      // The membership array is at row.profiles.community_members
       const membershipArray = row.profiles.community_members || [];
       if (membershipArray.length === 0) {
         console.log(`User ${row.user_id} has no communities, skipping...`);
         continue;
       }
 
-      // Build userCommunities: { community_id, community_name }
       const userCommunities = membershipArray.map((m) => ({
         community_id: m.community_id,
         community_name: m.communities.name,
       }));
 
       try {
-        // Send the daily email
         await sendDailyCommunityDigestEmail(
           row.profiles,
           userCommunities,
           dateRange
         );
 
-        // Update last_communities_sent_at
         const { error: updateErr } = await supabase
           .from("digest_subscriptions")
           .update({ last_communities_sent_at: now.toISOString() })

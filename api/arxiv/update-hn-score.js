@@ -8,12 +8,17 @@ const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-async function fetchHackerNewsScore(paperUrl) {
+async function fetchHackerNewsScore(arxivId) {
   try {
-    const encodedUrl = encodeURIComponent(paperUrl);
-    //typoTolerance=false gives exact match
+    // If there's no arXivId, just return 0
+    if (!arxivId) {
+      return 0;
+    }
+
+    const encodedId = encodeURIComponent(arxivId);
+    // Use the arXiv ID in the query instead of the full paper URL
     const response = await axios.get(
-      `http://hn.algolia.com/api/v1/search?query=${encodedUrl}&tags=story&typoTolerance=false`
+      `http://hn.algolia.com/api/v1/search?query=${encodedId}&tags=story&typoTolerance=false`
     );
     const hits = response.data.hits;
     if (hits.length > 0) {
@@ -21,7 +26,10 @@ async function fetchHackerNewsScore(paperUrl) {
     }
     return 0;
   } catch (error) {
-    console.error(`Failed to fetch Hacker News score for ${paperUrl}:`, error);
+    console.error(
+      `Failed to fetch Hacker News score for arXiv ID ${arxivId}:`,
+      error
+    );
     return null;
   }
 }
@@ -36,7 +44,8 @@ async function updateHackerNewsScore() {
   while (hasMoreData) {
     const { data: papers, error } = await supabase
       .from("arxivPapersData")
-      .select("id, paperUrl")
+      // Select the arxivId and also the paperUrl if you still want it for logging
+      .select("id, arxivId, paperUrl")
       .gte(
         "publishedDate",
         new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
@@ -55,13 +64,15 @@ async function updateHackerNewsScore() {
       console.log(`Processing ${papers.length} papers...`);
 
       for (const paper of papers) {
-        const { id, paperUrl } = paper;
-        console.log(`Fetching Hacker News score for paper "${paperUrl}"...`);
-
-        const hackerNewsScore = await fetchHackerNewsScore(paperUrl);
+        const { id, arxivId, paperUrl } = paper;
 
         console.log(
-          `Updating Hacker News score for paper "${paperUrl}" to ${hackerNewsScore}...`
+          `Fetching Hacker News score for paper "${paperUrl}" (arXiv ID: ${arxivId})...`
+        );
+        const hackerNewsScore = await fetchHackerNewsScore(arxivId);
+
+        console.log(
+          `Updating Hacker News score for "${paperUrl}" (arXiv ID: ${arxivId}) to ${hackerNewsScore}...`
         );
 
         const { error: updateError } = await supabase

@@ -289,9 +289,8 @@ async function main() {
   const now = new Date();
   const dateRange = getWeeklyDateRange();
 
-  const oneWeekAgo = new Date();
-  oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
-  oneWeekAgo.setHours(0, 0, 0, 0);
+  // Updated to use exact 7-day comparison
+  const oneWeekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
 
   const pageSize = 1000;
   let page = 0;
