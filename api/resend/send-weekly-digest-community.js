@@ -10,19 +10,19 @@ const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 const resend = new Resend(process.env.RESEND_API_KEY);
-
 const claudeApiKey = process.env.CLAUDE_API_KEY;
 const anthropic = new Anthropic({ apiKey: claudeApiKey });
 
+/**
+ * Build a 7-day date range for the weekly email content.
+ */
 function getWeeklyDateRange() {
   const endDate = new Date();
-  const startDate = new Date();
-  startDate.setDate(endDate.getDate() - 7);
+  const startDate = new Date(endDate.getTime() - 7 * 24 * 60 * 60 * 1000);
 
   function formatDate(d) {
     return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
   }
-
   return {
     startDate,
     endDate,
@@ -30,6 +30,9 @@ function getWeeklyDateRange() {
   };
 }
 
+/**
+ * Render an "empty community" HTML block.
+ */
 function renderEmptyCommunitySection(communityName) {
   return `
     <div style="margin: 20px 0; padding: 20px; border: 2px solid #eaeaea; border-radius: 5px;">
@@ -42,8 +45,7 @@ function renderEmptyCommunitySection(communityName) {
 }
 
 /**
- * Same authors logic as daily:
- * If more than 3 authors, show first 3 and "and others"
+ * Render up to 3 papers for a community. If there are more than 3 authors, show only the first 3 plus "and others".
  */
 function renderCommunitySection(communityName, papers) {
   const papersHtml = papers
@@ -56,17 +58,14 @@ function renderCommunitySection(communityName, papers) {
       } else {
         authorsString = authorsArr.join(", ") || "Unknown author";
       }
-
       const shortAbstract = paper.abstract
         ? paper.abstract.split(" ").slice(0, 30).join(" ") + "..."
         : "No abstract";
       const slugLink = paper.slug
         ? `https://aimodels.fyi/papers/arxiv/${paper.slug}`
         : "#";
-
       const score = paper.totalScore ? Math.round(Number(paper.totalScore)) : 0;
       const scoreText = `<span style="color: #999; font-size: 12px; margin-left: 6px;">• ${score} pts</span>`;
-
       return `
         <div style="margin-bottom: 20px; padding-bottom: 10px; border-bottom: 1px solid #eaeaea;">
           <a href="${slugLink}" style="font-weight: bold; color: #0070f3; text-decoration: none;">
@@ -83,7 +82,6 @@ function renderCommunitySection(communityName, papers) {
       `;
     })
     .join("");
-
   return `
     <div style="margin: 20px 0; padding: 20px; border: 2px solid #eaeaea; border-radius: 5px;">
       <h2 style="font-size: 16px; margin: 0;">${communityName}</h2>
@@ -92,6 +90,9 @@ function renderCommunitySection(communityName, papers) {
   `;
 }
 
+/**
+ * For a given community, fetch tasks then the top 3 papers (by totalScore) within the provided date range.
+ */
 async function fetchPapersForCommunity(
   communityId,
   communityName,
@@ -102,7 +103,6 @@ async function fetchPapersForCommunity(
     .from("community_tasks")
     .select("task_id")
     .eq("community_id", communityId);
-
   if (tasksErr) {
     console.error(
       `Error fetching tasks for community ${communityId}:`,
@@ -119,9 +119,7 @@ async function fetchPapersForCommunity(
       paperIds: [],
     };
   }
-
   const taskIds = tasks.map((t) => t.task_id);
-
   const { data: papers, error: papersErr } = await supabase
     .from("arxivPapersData")
     .select("id, title, abstract, authors, slug, totalScore")
@@ -130,7 +128,6 @@ async function fetchPapersForCommunity(
     .overlaps("task_ids", taskIds)
     .order("totalScore", { ascending: false })
     .limit(3);
-
   if (papersErr) {
     console.error("Error fetching top papers:", papersErr);
     return {
@@ -144,19 +141,19 @@ async function fetchPapersForCommunity(
       paperIds: [],
     };
   }
-
   const html = renderCommunitySection(communityName, papers);
   return { communityHtml: html, paperIds: papers.map((p) => p.id) };
 }
 
+/**
+ * For the subject line, fetch details for all papers and pick one at random.
+ */
 async function fetchPaperDetails(paperIds) {
   if (!paperIds || paperIds.length === 0) return {};
-
   const { data, error } = await supabase
     .from("arxivPapersData")
     .select("id, title, authors, abstract, slug")
     .in("id", paperIds);
-
   if (error) {
     throw new Error(`Error fetching paper details: ${error.message}`);
   }
@@ -172,11 +169,9 @@ async function generateSubjectLine(paperDetails, dateRange) {
   if (papersArray.length === 0) {
     return `Your Weekly Community Digest (${dateRange.formatted})`;
   }
-
   const randomIndex = Math.floor(Math.random() * papersArray.length);
   const randomPaper = papersArray[randomIndex];
   const paperTitle = randomPaper?.title || "Unknown Paper";
-
   try {
     const claudeResponse = await anthropic.messages.create({
       model: "claude-3-5-sonnet-20241022",
@@ -195,7 +190,6 @@ No exclamations or extra fluff.`,
         },
       ],
     });
-
     if (
       claudeResponse &&
       claudeResponse.content &&
@@ -206,7 +200,6 @@ No exclamations or extra fluff.`,
   } catch (err) {
     console.error("Error generating subject line with Claude:", err);
   }
-
   return `Research Paper Review: ${paperTitle} (${dateRange.formatted})`;
 }
 
@@ -217,7 +210,6 @@ async function sendWeeklyCommunityDigestEmail(
 ) {
   let allHtml = "";
   let allPaperIds = [];
-
   for (const { community_id, community_name } of userCommunities) {
     const { communityHtml, paperIds } = await fetchPapersForCommunity(
       community_id,
@@ -228,10 +220,8 @@ async function sendWeeklyCommunityDigestEmail(
     allHtml += communityHtml;
     allPaperIds.push(...paperIds);
   }
-
   const paperDetails = await fetchPaperDetails([...new Set(allPaperIds)]);
   const subjectLine = await generateSubjectLine(paperDetails, dateRange);
-
   const emailHtml = `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #333;">
       <div style="text-align: left; margin-bottom: 20px;">
@@ -239,11 +229,9 @@ async function sendWeeklyCommunityDigestEmail(
           Research & Discussion Digest
         </h1>
       </div>
-
       <p style="font-size: 15px; margin: 0 0 15px 0;">
         Hello! Here's a quick recap of activity on AImodels.fyi this week:
       </p>
-
       <div style="margin-bottom: 30px;">
         <a
           href="https://www.aimodels.fyi/dashboard"
@@ -260,9 +248,7 @@ async function sendWeeklyCommunityDigestEmail(
           View Dashboard &rarr;
         </a>
       </div>
-
       ${allHtml}
-
       <div style="margin-top: 30px; font-size: 12px; color: #666; text-align: center;">
         <hr style="border: none; border-top: 1px solid #eee;" />
         <p style="margin: 10px 0;">
@@ -274,7 +260,6 @@ async function sendWeeklyCommunityDigestEmail(
       </div>
     </div>
   `;
-
   return resend.emails.send({
     from: "Mike Young <mike@mail.aimodels.fyi>",
     replyTo: ["mike@aimodels.fyi"],
@@ -286,11 +271,16 @@ async function sendWeeklyCommunityDigestEmail(
 
 async function main() {
   console.log("Starting weekly community digest job...");
-  const now = new Date();
   const dateRange = getWeeklyDateRange();
+  const now = new Date();
 
-  // Updated to use exact 7-day comparison
-  const oneWeekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+  // Compute cutoff date: today at local midnight minus 7 days.
+  const cutoff = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  cutoff.setDate(cutoff.getDate() - 7);
+
+  // Build a filter string that compares last_communities_sent_at to the cutoff.
+  // We use .lt (less than) so that if a user’s last send was on the cutoff date, they are not re-sent.
+  const filterString = `last_communities_sent_at.is.null,last_communities_sent_at.lt.${cutoff.toISOString()}`;
 
   const pageSize = 1000;
   let page = 0;
@@ -300,22 +290,20 @@ async function main() {
       .from("digest_subscriptions")
       .select(
         `
-        user_id,
-        last_communities_sent_at,
-        profiles!inner (
-          email,
-          full_name,
-          community_members!inner (
-            community_id,
-            communities!inner(name)
+          user_id,
+          last_communities_sent_at,
+          profiles!inner (
+            email,
+            full_name,
+            community_members!inner (
+              community_id,
+              communities!inner(name)
+            )
           )
-        )
-      `
+        `
       )
       .eq("papers_frequency", "weekly")
-      .or(
-        `last_communities_sent_at.is.null,last_communities_sent_at.lt.${oneWeekAgo.toISOString()}`
-      )
+      .or(filterString)
       .range(page * pageSize, (page + 1) * pageSize - 1);
 
     if (rowErr) {
@@ -323,13 +311,11 @@ async function main() {
       break;
     }
     if (!pageRows || pageRows.length === 0) {
-      console.log("No more weekly users to process.");
+      console.log("No more weekly users to process in this chunk.");
       break;
     }
 
-    console.log(
-      `Processing page ${page}, found ${pageRows.length} user rows...`
-    );
+    console.log(`Processing page ${page}, found ${pageRows.length} user(s)...`);
 
     for (const row of pageRows) {
       const userEmail = row.profiles?.email;
@@ -337,41 +323,38 @@ async function main() {
         console.log(`User ${row.user_id} has no email, skipping...`);
         continue;
       }
-
       const membershipArray = row.profiles.community_members || [];
       if (membershipArray.length === 0) {
         console.log(`User ${row.user_id} has no communities, skipping...`);
         continue;
       }
-
-      const userCommunities = membershipArray.map((m) => ({
-        community_id: m.community_id,
-        community_name: m.communities.name,
-      }));
-
       try {
+        const userCommunities = membershipArray.map((m) => ({
+          community_id: m.community_id,
+          community_name: m.communities.name,
+        }));
         await sendWeeklyCommunityDigestEmail(
           row.profiles,
           userCommunities,
           dateRange
         );
-
         const { error: updateErr } = await supabase
           .from("digest_subscriptions")
           .update({ last_communities_sent_at: now.toISOString() })
           .eq("user_id", row.user_id);
-
         if (updateErr) {
           console.error(
             `Error updating last_communities_sent_at for user ${row.user_id}:`,
             updateErr
           );
         } else {
-          console.log(`Sent weekly community digest to user ${row.user_id}`);
+          console.log(
+            `Sent weekly community digest to user ${row.user_id} <${userEmail}>`
+          );
         }
       } catch (err) {
         console.error(
-          `Error sending weekly digest to user ${row.user_id}:`,
+          `Error sending weekly digest to user ${row.user_id} <${userEmail}>:`,
           err
         );
       }
@@ -384,6 +367,7 @@ async function main() {
   }
 
   console.log("Weekly community digest job complete.");
+  process.exit(0);
 }
 
 main().catch((err) => {

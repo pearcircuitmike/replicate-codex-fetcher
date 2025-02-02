@@ -21,7 +21,7 @@ const anthropic = new Anthropic({ apiKey: claudeApiKey });
  */
 function getDailyDateRange() {
   const endDate = new Date();
-  // Instead of 24 hours, we look back 72 hours.
+  // Look back 72 hours
   const startDate = new Date(endDate.getTime() - 72 * 60 * 60 * 1000);
 
   function formatDate(d) {
@@ -42,15 +42,13 @@ function renderEmptyCommunitySection(communityName) {
   return `
     <div style="margin: 20px 0; padding: 20px; border: 2px solid #eaeaea; border-radius: 5px;">
       <h2 style="font-size: 16px; margin: 0;">${communityName}</h2>
-      <p style="color: #666; margin: 10px 0 0 0; font-style: italic;">
-        No new papers found.
-      </p>
+      <p style="color: #666; margin: 10px 0 0 0; font-style: italic;">No new papers found.</p>
     </div>
   `;
 }
 
 /**
- * Renders top 3 papers for a community, restricting authors to 3.
+ * Renders up to 3 papers for a community, restricting authors to 3.
  */
 function renderCommunitySection(communityName, papers) {
   const papersHtml = papers
@@ -76,16 +74,10 @@ function renderCommunitySection(communityName, papers) {
 
       return `
         <div style="margin-bottom: 20px; padding-bottom: 10px; border-bottom: 1px solid #eaeaea;">
-          <a href="${slugLink}" style="font-weight: bold; color: #0070f3; text-decoration: none;">
-            ${title}
-          </a>
+          <a href="${slugLink}" style="font-weight: bold; color: #0070f3; text-decoration: none;">${title}</a>
           ${scoreText}
-          <div style="font-size: 14px; color: #666; margin-top: 5px;">
-            ${authorsString}
-          </div>
-          <p style="font-size: 14px; color: #444; margin-top: 8px; line-height: 1.4;">
-            ${shortAbstract}
-          </p>
+          <div style="font-size: 14px; color: #666; margin-top: 5px;">${authorsString}</div>
+          <p style="font-size: 14px; color: #444; margin-top: 8px; line-height: 1.4;">${shortAbstract}</p>
         </div>
       `;
     })
@@ -100,7 +92,7 @@ function renderCommunitySection(communityName, papers) {
 }
 
 /**
- * For each community, fetch tasks => top 3 papers => build HTML + gather paper IDs
+ * For each community, fetch tasks → top 3 papers → build HTML + gather paper IDs.
  */
 async function fetchPapersForCommunity(
   communityId,
@@ -108,7 +100,6 @@ async function fetchPapersForCommunity(
   startDate,
   endDate
 ) {
-  // Fetch tasks for this community
   const { data: tasks, error: tasksErr } = await supabase
     .from("community_tasks")
     .select("task_id")
@@ -133,7 +124,6 @@ async function fetchPapersForCommunity(
 
   const taskIds = tasks.map((t) => t.task_id);
 
-  // Fetch top 3 papers within the date range and for these tasks
   const { data: papers, error: papersErr } = await supabase
     .from("arxivPapersData")
     .select("id, title, abstract, authors, slug, totalScore")
@@ -162,20 +152,17 @@ async function fetchPapersForCommunity(
 }
 
 /**
- * Pick a random paper from the combined set of paperIds to generate the subject line.
+ * Pick a random paper from the combined set of paper IDs to generate the subject line.
  */
 async function fetchPaperDetails(paperIds) {
   if (!paperIds || paperIds.length === 0) return {};
-
   const { data, error } = await supabase
     .from("arxivPapersData")
     .select("id, title, authors, abstract, slug")
     .in("id", paperIds);
-
   if (error) {
     throw new Error(`Error fetching paper details: ${error.message}`);
   }
-
   const details = {};
   for (const p of data || []) {
     details[p.id] = p;
@@ -188,16 +175,14 @@ async function generateSubjectLine(paperDetails, dateRange) {
   if (papersArray.length === 0) {
     return `Your Community Digest (${dateRange.formatted})`;
   }
-
   const randomIndex = Math.floor(Math.random() * papersArray.length);
   const randomPaper = papersArray[randomIndex];
   const paperTitle = randomPaper?.title || "Unknown Paper";
-
   try {
     const claudeResponse = await anthropic.messages.create({
       model: "claude-3-5-sonnet-20241022",
       max_tokens: 60,
-      system: `You are an AI that writes a single short subject line for a research digest email.
+      system: `You are an AI that writes a single short plain-english click-driving subject line for a research digest email.
 Never add extra text or disclaimers.
 Avoid exclamations, adverbs, or buzzwords.
 Output only one sentence under 90 characters.
@@ -206,31 +191,24 @@ Maintain a calm, clear tone. Be factual.`,
         {
           role: "user",
           content: `Paper title: "${paperTitle}"
-You are an AI that writes a single short subject line for a research digest email.
+You are an AI that write a single short plain-english subject line for a research digest email focused on the key insight of the paper with few words, like a news article headline.
 No exclamations or extra fluff.`,
         },
       ],
     });
-
     if (
       claudeResponse &&
       claudeResponse.content &&
       claudeResponse.content.length > 0
     ) {
-      // Claude returns an array with 1 message in content
       return claudeResponse.content[0].text.trim();
     }
   } catch (err) {
     console.error("Error generating subject line with Claude:", err);
   }
-
-  // Fallback if anything goes wrong
   return `Research Paper Review: ${paperTitle} (${dateRange.formatted})`;
 }
 
-/**
- * Build & send the daily digest email for a single user, across all their communities.
- */
 async function sendDailyCommunityDigestEmail(
   userProfile,
   userCommunities,
@@ -238,7 +216,6 @@ async function sendDailyCommunityDigestEmail(
 ) {
   let allCommunitiesHtml = "";
   let allPaperIds = [];
-
   for (const { community_id, community_name } of userCommunities) {
     const { communityHtml, paperIds } = await fetchPapersForCommunity(
       community_id,
@@ -249,55 +226,25 @@ async function sendDailyCommunityDigestEmail(
     allCommunitiesHtml += communityHtml;
     allPaperIds.push(...paperIds);
   }
-
-  // Generate subject line using a random paper
   const paperDetails = await fetchPaperDetails([...new Set(allPaperIds)]);
   const subjectLine = await generateSubjectLine(paperDetails, dateRange);
-
   const emailHtml = `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #333;">
       <div style="text-align: left; margin-bottom: 20px;">
-        <h1 style="color: #0070f3; font-size: 20px; margin-bottom: 8px;">
-          Research & Discussion Digest
-        </h1>
+        <h1 style="color: #0070f3; font-size: 20px; margin-bottom: 8px;">Research & Discussion Digest</h1>
       </div>
-
-      <p style="font-size: 15px; margin: 0 0 15px 0;">
-        Hello! Here's a quick recap of activity on AImodels.fyi today:
-      </p>
-
+      <p style="font-size: 15px; margin: 0 0 15px 0;">Hello! Here's a quick recap of activity on AImodels.fyi today:</p>
       <div style="margin-bottom: 30px;">
-        <a
-          href="https://www.aimodels.fyi/dashboard"
-          style="
-            display: inline-block;
-            padding: 10px 20px;
-            color: #0070f3;
-            text-decoration: none;
-            font-weight: bold;
-            border: 2px solid #0070f3;
-            border-radius: 4px;
-          "
-        >
-          View Dashboard &rarr;
-        </a>
+        <a href="https://www.aimodels.fyi/dashboard" style="display: inline-block; padding: 10px 20px; color: #0070f3; text-decoration: none; font-weight: bold; border: 2px solid #0070f3; border-radius: 4px;">View Dashboard &rarr;</a>
       </div>
-
       ${allCommunitiesHtml}
-
       <div style="margin-top: 30px; font-size: 12px; color: #666; text-align: center;">
         <hr style="border: none; border-top: 1px solid #eee;" />
-        <p style="margin: 10px 0;">
-          <a href="https://www.aimodels.fyi/account" style="color: #666; text-decoration: none;">
-            Manage email preferences
-          </a>
-        </p>
+        <p style="margin: 10px 0;"><a href="https://www.aimodels.fyi/account" style="color: #666; text-decoration: none;">Manage email preferences</a></p>
         <p style="margin: 0;">© 2025 AImodels.fyi</p>
       </div>
     </div>
   `;
-
-  // Send the email via Resend
   return resend.emails.send({
     from: "Mike Young <mike@mail.aimodels.fyi>",
     replyTo: ["mike@aimodels.fyi"],
@@ -307,22 +254,21 @@ async function sendDailyCommunityDigestEmail(
   });
 }
 
-/**
- * Main daily job.
- * We still send this once every 24 hours per user,
- * but we fetch papers from the last 72 hours.
- */
 async function main() {
   console.log("Starting daily community digest job...");
   const now = new Date();
   const dateRange = getDailyDateRange();
-
-  // Check if the user has not been sent an email in the last 24 hours
-  const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-
+  // Use today's date at local midnight as the cutoff
+  const startOfToday = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate()
+  );
+  // Build a filter string so that we select only users whose last_communities_sent_at is null
+  // or is less than today's midnight.
+  const filterString = `last_communities_sent_at.is.null,last_communities_sent_at.lt.${startOfToday.toISOString()}`;
   const pageSize = 1000;
   let page = 0;
-
   while (true) {
     const { data: pageRows, error: rowErr } = await supabase
       .from("digest_subscriptions")
@@ -341,11 +287,8 @@ async function main() {
       `
       )
       .eq("papers_frequency", "daily")
-      .or(
-        `last_communities_sent_at.is.null,last_communities_sent_at.lt.${oneDayAgo.toISOString()}`
-      )
+      .or(filterString)
       .range(page * pageSize, (page + 1) * pageSize - 1);
-
     if (rowErr) {
       console.error("Error fetching daily community digest users:", rowErr);
       break;
@@ -354,45 +297,34 @@ async function main() {
       console.log("No more daily users to process.");
       break;
     }
-
     console.log(
       `Processing page ${page}, found ${pageRows.length} user rows...`
     );
-
     for (const row of pageRows) {
       const userEmail = row.profiles?.email;
       if (!userEmail) {
         console.log(`User ${row.user_id} has no email, skipping...`);
         continue;
       }
-
-      // The membership array is at row.profiles.community_members
       const membershipArray = row.profiles.community_members || [];
       if (membershipArray.length === 0) {
         console.log(`User ${row.user_id} has no communities, skipping...`);
         continue;
       }
-
-      // Build userCommunities: { community_id, community_name }
       const userCommunities = membershipArray.map((m) => ({
         community_id: m.community_id,
         community_name: m.communities.name,
       }));
-
       try {
-        // Send the daily email with 72-hr papers
         await sendDailyCommunityDigestEmail(
           row.profiles,
           userCommunities,
           dateRange
         );
-
-        // Update last_communities_sent_at
         const { error: updateErr } = await supabase
           .from("digest_subscriptions")
           .update({ last_communities_sent_at: now.toISOString() })
           .eq("user_id", row.user_id);
-
         if (updateErr) {
           console.error(
             `Error updating last_communities_sent_at for user ${row.user_id}:`,
@@ -408,13 +340,11 @@ async function main() {
         );
       }
     }
-
     if (pageRows.length < pageSize) {
       break;
     }
     page++;
   }
-
   console.log("Daily community digest job complete.");
 }
 
