@@ -421,8 +421,8 @@ async function publishToReddit() {
 
     // Wait between posts if this isn't the last subreddit
     if (i < SUBREDDITS.length - 1) {
-      console.log("Waiting 60 seconds before next post...");
-      await delay(60000);
+      console.log("Waiting 180 seconds before next post...");
+      await delay(180000);
     }
   }
 
