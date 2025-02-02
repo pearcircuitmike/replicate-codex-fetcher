@@ -16,12 +16,13 @@ const claudeApiKey = process.env.CLAUDE_API_KEY;
 const anthropic = new Anthropic({ apiKey: claudeApiKey });
 
 /**
- * Return the last 24-hour range for "daily".
+ * Return the last 72-hour range for "daily" so that users get papers
+ * indexed on Friday even if they're reading on the weekend.
  */
 function getDailyDateRange() {
   const endDate = new Date();
-  const startDate = new Date();
-  startDate.setDate(endDate.getDate() - 1);
+  // Instead of 24 hours, we look back 72 hours.
+  const startDate = new Date(endDate.getTime() - 72 * 60 * 60 * 1000);
 
   function formatDate(d) {
     return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
@@ -49,7 +50,7 @@ function renderEmptyCommunitySection(communityName) {
 }
 
 /**
- * Renders top 3 papers for a community, **restricting authors to 3**.
+ * Renders top 3 papers for a community, restricting authors to 3.
  */
 function renderCommunitySection(communityName, papers) {
   const papersHtml = papers
@@ -58,7 +59,6 @@ function renderCommunitySection(communityName, papers) {
       const authorsArr = Array.isArray(paper.authors) ? paper.authors : [];
       let authorsString = "";
       if (authorsArr.length > 3) {
-        // first 3 and "and others"
         authorsString = authorsArr.slice(0, 3).join(", ") + ", and others";
       } else {
         authorsString = authorsArr.join(", ") || "Unknown author";
@@ -108,7 +108,7 @@ async function fetchPapersForCommunity(
   startDate,
   endDate
 ) {
-  // tasks
+  // Fetch tasks for this community
   const { data: tasks, error: tasksErr } = await supabase
     .from("community_tasks")
     .select("task_id")
@@ -133,7 +133,7 @@ async function fetchPapersForCommunity(
 
   const taskIds = tasks.map((t) => t.task_id);
 
-  // top 3 papers
+  // Fetch top 3 papers within the date range and for these tasks
   const { data: papers, error: papersErr } = await supabase
     .from("arxivPapersData")
     .select("id, title, abstract, authors, slug, totalScore")
@@ -162,7 +162,7 @@ async function fetchPapersForCommunity(
 }
 
 /**
- * For the subject line, we pick a random paper from the big set of paperIds.
+ * Pick a random paper from the combined set of paperIds to generate the subject line.
  */
 async function fetchPaperDetails(paperIds) {
   if (!paperIds || paperIds.length === 0) return {};
@@ -217,17 +217,19 @@ No exclamations or extra fluff.`,
       claudeResponse.content &&
       claudeResponse.content.length > 0
     ) {
+      // Claude returns an array with 1 message in content
       return claudeResponse.content[0].text.trim();
     }
   } catch (err) {
     console.error("Error generating subject line with Claude:", err);
   }
 
+  // Fallback if anything goes wrong
   return `Research Paper Review: ${paperTitle} (${dateRange.formatted})`;
 }
 
 /**
- * Build & send the daily digest email for a single user, across all their communities
+ * Build & send the daily digest email for a single user, across all their communities.
  */
 async function sendDailyCommunityDigestEmail(
   userProfile,
@@ -248,7 +250,7 @@ async function sendDailyCommunityDigestEmail(
     allPaperIds.push(...paperIds);
   }
 
-  // subject line from random paper
+  // Generate subject line using a random paper
   const paperDetails = await fetchPaperDetails([...new Set(allPaperIds)]);
   const subjectLine = await generateSubjectLine(paperDetails, dateRange);
 
@@ -295,7 +297,7 @@ async function sendDailyCommunityDigestEmail(
     </div>
   `;
 
-  // Send via Resend
+  // Send the email via Resend
   return resend.emails.send({
     from: "Mike Young <mike@mail.aimodels.fyi>",
     replyTo: ["mike@aimodels.fyi"],
@@ -307,14 +309,15 @@ async function sendDailyCommunityDigestEmail(
 
 /**
  * Main daily job.
- * Notice the .select(...) structure that goes digest_subscriptions -> profiles -> community_members -> communities
+ * We still send this once every 24 hours per user,
+ * but we fetch papers from the last 72 hours.
  */
 async function main() {
   console.log("Starting daily community digest job...");
   const now = new Date();
   const dateRange = getDailyDateRange();
 
-  // Updated to use exact 24-hour comparison
+  // Check if the user has not been sent an email in the last 24 hours
   const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
 
   const pageSize = 1000;
@@ -363,24 +366,28 @@ async function main() {
         continue;
       }
 
+      // The membership array is at row.profiles.community_members
       const membershipArray = row.profiles.community_members || [];
       if (membershipArray.length === 0) {
         console.log(`User ${row.user_id} has no communities, skipping...`);
         continue;
       }
 
+      // Build userCommunities: { community_id, community_name }
       const userCommunities = membershipArray.map((m) => ({
         community_id: m.community_id,
         community_name: m.communities.name,
       }));
 
       try {
+        // Send the daily email with 72-hr papers
         await sendDailyCommunityDigestEmail(
           row.profiles,
           userCommunities,
           dateRange
         );
 
+        // Update last_communities_sent_at
         const { error: updateErr } = await supabase
           .from("digest_subscriptions")
           .update({ last_communities_sent_at: now.toISOString() })
