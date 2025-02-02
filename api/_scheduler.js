@@ -78,6 +78,7 @@ cron.schedule("05 06 * * *", async () => {
     await runScript("api/site/models-of-the-week.js");
     await runScript("api/twitter/publish-paper-tweet.js");
     await runScript("api/twitter/publish-model-tweet.js");
+    await runScript("api/twitter/publish-reply-tweet.js");
 
     // ----------------------------------------
     // Clean and regenerate summaries (new step)
