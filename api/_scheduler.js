@@ -61,6 +61,8 @@ cron.schedule("05 06 * * *", async () => {
     await runScript("api/arxiv/update-hn-score.js");
     await runScript("api/arxiv/update-reddit-score.js");
     await runScript("api/arxiv/update-twitter-score.js");
+    // New: update Hugging Face score script
+    await runScript("api/arxiv/update-huggingFace-score.js");
     await runScript("api/arxiv/generate-summary.js");
     await runScript("api/arxiv/publish-to-devto.js");
     await runScript("api/arxiv/publish-to-hashnode.js");
