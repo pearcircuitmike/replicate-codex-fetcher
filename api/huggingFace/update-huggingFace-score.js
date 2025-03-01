@@ -16,9 +16,7 @@ async function updateModelLikes(model) {
     const response = await axios.get(
       `https://huggingface.co/api/models/${model.creator}/${model.modelName}`,
       {
-        headers: {
-          Authorization: `Bearer ${huggingFaceApiToken}`,
-        },
+        // Removed authorization headers
       }
     );
 
@@ -92,3 +90,6 @@ export async function updateLikes() {
 
   console.log("Finished updating model likes.");
 }
+
+// If you want this file to run on its own:
+updateLikes().catch((err) => console.error("Error in updateLikes:", err));

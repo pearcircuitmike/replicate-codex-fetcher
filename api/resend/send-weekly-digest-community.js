@@ -18,7 +18,7 @@ const anthropic = new Anthropic({ apiKey: claudeApiKey });
  */
 function getWeeklyDateRange() {
   const endDate = new Date();
-  const startDate = new Date(endDate.getTime() - 7 * 24 * 60 * 60 * 1000);
+  const startDate = new Date(endDate.getTime() - 6 * 24 * 60 * 60 * 1000);
 
   function formatDate(d) {
     return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
@@ -276,7 +276,7 @@ async function main() {
 
   // Compute cutoff date: today at local midnight minus 7 days.
   const cutoff = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  cutoff.setDate(cutoff.getDate() - 7);
+  cutoff.setDate(cutoff.getDate() - 6);
 
   // Build a filter string that compares last_communities_sent_at to the cutoff.
   // We use .lt (less than) so that if a user’s last send was on the cutoff date, they are not re-sent.

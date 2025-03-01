@@ -41,9 +41,7 @@ function normalizeName(name) {
 async function fetchModelData(url) {
   const modelsResponse = await fetch(url, {
     method: "GET",
-    headers: {
-      Authorization: `Bearer ${huggingFaceApiToken ?? ""}`,
-    },
+    // Removed authorization headers
   });
 
   const linkHeader = modelsResponse.headers.get("Link");
