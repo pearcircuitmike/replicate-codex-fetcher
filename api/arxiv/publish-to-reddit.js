@@ -175,7 +175,7 @@ async function generateRedditPost(
     console.log("Generating Reddit post content...");
 
     const message = await anthropic.messages.create({
-      model: "claude-3-5-sonnet-20241022",
+      model: "claude-3-7-sonnet-20250219",
       max_tokens: 1000,
       messages: [
         {
