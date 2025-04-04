@@ -16,6 +16,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.19.1",
     "@google/generative-ai": "^0.21.0",
+    "@mistralai/mistralai": "^1.5.2",
     "@supabase/supabase-js": "^2.46.1",
     "anthropic": "^0.0.0",
     "anthropic-ai": "^0.0.10",
