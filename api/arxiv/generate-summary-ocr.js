@@ -514,7 +514,7 @@ async function processPapers() {
       .from("arxivPapersData")
       .select("*")
       .is("generatedSummary", null)
-      .eq("id", "07c79b5c-157c-40c8-a1e7-36155c08341c") // TESTING... mUST DELETE
+      .eq("id", "b32aa4a0-fb9b-41e4-9a6c-fadf43f41cbf") // TESTING... mUST DELETE
       .not("paperGraphics", "is", null)
       .gte("totalScore", 0) // Only papers with score > 0
       .order("totalScore", { ascending: false })

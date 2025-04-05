@@ -549,120 +549,166 @@ async function main() {
   console.log(`[MAIN] Process started at: ${mainStartTime.toISOString()}`);
 
   try {
-    // For testing, process specific paper directly
-    console.log(`[MAIN] Fetching specific test paper from database`);
-    const { data: papers, error } = await supabase
-      .from("arxivPapersData")
-      .select("id, arxivId")
-      .is("paperGraphics", null)
-      .eq("id", "07c79b5c-157c-40c8-a1e7-36155c08341c") // Test specific paper
-      .limit(1);
+    // Calculate date 4 days ago for filtering recently indexed papers
+    const fourDaysAgo = new Date();
+    fourDaysAgo.setDate(fourDaysAgo.getDate() - 4);
+    console.log(
+      `[MAIN] Filtering papers indexed since: ${fourDaysAgo.toISOString()}`
+    );
 
-    if (error) {
-      console.error(`[MAIN] Database query error:`, error);
-      throw error;
+    // First, count total papers that meet our criteria
+    console.log(`[MAIN] Counting eligible papers in database...`);
+    const { count, error: countError } = await supabase
+      .from("arxivPapersData")
+      .select("id", { count: "exact" })
+      .is("paperGraphics", null)
+      .gt("totalScore", 0.5)
+      .gte("indexedDate", fourDaysAgo.toISOString());
+
+    if (countError) {
+      console.error(`[MAIN] Database count query error:`, countError);
+      throw countError;
     }
 
-    if (!papers?.length) {
-      console.log("[MAIN] No papers to analyze. Test paper not found.");
+    console.log(`[MAIN] Found ${count || 0} papers matching criteria`);
+
+    if (!count || count === 0) {
+      console.log("[MAIN] No papers to analyze. Process complete.");
       return;
     }
 
-    // Log paper details
-    console.log(`[MAIN] Test paper details:`);
-    console.log(`[MAIN]   - ID: ${papers[0].id}`);
-    console.log(`[MAIN]   - ArXiv ID: ${papers[0].arxivId}`);
-
-    // Process the paper
-    console.log(`[MAIN] Processing test paper...`);
-    await processAndStorePaper(papers[0]);
-    console.log(`[MAIN] Test paper processing complete`);
-
-    /*
-    // PRODUCTION VERSION BELOW - comment in when ready
-    console.log(`[MAIN] Starting batch processing of papers`);
+    console.log(`[MAIN] Starting batch processing of ${count} papers`);
     let startIndex = 0;
     let hasMore = true;
     let batchNumber = 1;
     let totalProcessed = 0;
-    
+
     while (hasMore) {
       // Take breaks between sessions
       if (startIndex > 0) {
         const sessionBreak = getHumanDelay(300000); // 5-minute average break
-        console.log(`[MAIN] Taking a break between batches (${Math.round(sessionBreak / 1000)} seconds)...`);
+        console.log(
+          `[MAIN] Taking a break between batches (${Math.round(
+            sessionBreak / 1000
+          )} seconds)...`
+        );
         await delay(sessionBreak);
       }
-      
+
       console.log(`[MAIN] Starting batch #${batchNumber}`);
-      console.log(`[MAIN] Fetching papers from index ${startIndex} to ${startIndex + BATCH_SIZE - 1}`);
-      
+      console.log(
+        `[MAIN] Fetching papers from index ${startIndex} to ${
+          startIndex + BATCH_SIZE - 1
+        }`
+      );
+
       // Query database for papers
       const queryStartTime = new Date();
-      console.log(`[MAIN] Database query started at: ${queryStartTime.toISOString()}`);
-      
+      console.log(
+        `[MAIN] Database query started at: ${queryStartTime.toISOString()}`
+      );
+
       const { data: papers, error } = await supabase
         .from("arxivPapersData")
         .select("id, arxivId")
         .is("paperGraphics", null)
         .gt("totalScore", 0.5)
+        .gte("indexedDate", fourDaysAgo.toISOString())
         .order("totalScore", { ascending: false })
         .range(startIndex, startIndex + BATCH_SIZE - 1);
-        
+
       const queryEndTime = new Date();
       const queryDuration = (queryEndTime - queryStartTime) / 1000;
-      console.log(`[MAIN] Database query completed in ${queryDuration.toFixed(2)} seconds`);
-      
+      console.log(
+        `[MAIN] Database query completed in ${queryDuration.toFixed(2)} seconds`
+      );
+
       if (error) {
         console.error(`[MAIN] Database query error:`, error);
         throw error;
       }
-      
+
       if (!papers?.length) {
         console.log("[MAIN] No more papers to analyze. Process complete.");
         hasMore = false;
         break;
       }
-      
-      console.log(`[MAIN] Batch #${batchNumber}: Retrieved ${papers.length} papers to process`);
-      
+
+      console.log(
+        `[MAIN] Batch #${batchNumber}: Retrieved ${papers.length} papers to process`
+      );
+      console.log(
+        `[MAIN] Progress: ${totalProcessed}/${count} (${(
+          (totalProcessed / count) *
+          100
+        ).toFixed(2)}%)`
+      );
+
       // Log papers to be processed
       papers.forEach((paper, index) => {
         console.log(`[MAIN] Paper ${index + 1}/${papers.length} in batch:`);
         console.log(`[MAIN]   - ID: ${paper.id}`);
         console.log(`[MAIN]   - ArXiv ID: ${paper.arxivId}`);
       });
-      
+
       // Process each paper in the batch
       for (let i = 0; i < papers.length; i++) {
         const paper = papers[i];
-        console.log(`[MAIN] Processing paper ${i + 1}/${papers.length} in batch #${batchNumber}`);
-        
+        console.log(
+          `[MAIN] Processing paper ${i + 1}/${
+            papers.length
+          } in batch #${batchNumber}`
+        );
+        console.log(
+          `[MAIN] Overall progress: ${totalProcessed + 1}/${count} (${(
+            ((totalProcessed + 1) / count) *
+            100
+          ).toFixed(2)}%)`
+        );
+
         const paperStartTime = new Date();
         await processAndStorePaper(paper);
         const paperEndTime = new Date();
         const paperDuration = (paperEndTime - paperStartTime) / 1000;
-        
-        console.log(`[MAIN] Paper ${paper.arxivId} processing completed in ${paperDuration.toFixed(2)} seconds`);
-        
+
+        console.log(
+          `[MAIN] Paper ${
+            paper.arxivId
+          } processing completed in ${paperDuration.toFixed(2)} seconds`
+        );
+
         totalProcessed++;
-        
+
         // Take a natural break between papers
         if (i < papers.length - 1) {
           const breakTime = getHumanDelay(BASE_DELAY * 3);
-          console.log(`[MAIN] Taking a break between papers (${Math.round(breakTime / 1000)} seconds)...`);
+          console.log(
+            `[MAIN] Taking a break between papers (${Math.round(
+              breakTime / 1000
+            )} seconds)...`
+          );
           await delay(breakTime);
         }
       }
-      
+
       console.log(`[MAIN] Completed batch #${batchNumber}`);
       console.log(`[MAIN] Processed ${papers.length} papers in this batch`);
-      console.log(`[MAIN] Total papers processed so far: ${totalProcessed}`);
-      
+      console.log(
+        `[MAIN] Total papers processed so far: ${totalProcessed}/${count} (${(
+          (totalProcessed / count) *
+          100
+        ).toFixed(2)}%)`
+      );
+
       startIndex += BATCH_SIZE;
       batchNumber++;
+
+      // Break if we've processed all papers
+      if (totalProcessed >= count) {
+        console.log(`[MAIN] All eligible papers have been processed`);
+        hasMore = false;
+      }
     }
-    */
 
     // Log completion stats
     const mainEndTime = new Date();
@@ -676,7 +722,12 @@ async function main() {
         2
       )} seconds (${mainDurationMinutes.toFixed(2)} minutes)`
     );
-    console.log(`[MAIN] Total papers processed: 1`); // or totalProcessed in production
+    console.log(
+      `[MAIN] Total papers processed: ${totalProcessed}/${count} (${(
+        (totalProcessed / count) *
+        100
+      ).toFixed(2)}%)`
+    );
   } catch (error) {
     console.error("[MAIN] Error in main process:", error);
     console.error("[MAIN] Stack trace:", error.stack);
