@@ -418,7 +418,7 @@ async function processAndStorePaper(paper) {
       );
       const { data, error } = await supabase
         .from("arxivPapersData")
-        .update({ paperTables: [] })
+        .update({ paperTables: [], lastUpdated: new Date().toISOString() })
         .eq("id", paper.id);
       if (error) {
         console.error(`[PAPER PROCESSING] Database update error:`, error);
@@ -471,7 +471,10 @@ async function processAndStorePaper(paper) {
       console.log(`[PAPER PROCESSING] Updating database with processed tables`);
       const { data, error } = await supabase
         .from("arxivPapersData")
-        .update({ paperTables: processedTables })
+        .update({
+          paperTables: processedTables,
+          lastUpdated: new Date().toISOString(),
+        })
         .eq("id", paper.id);
       if (error) {
         console.error(`[PAPER PROCESSING] Database update error:`, error);
@@ -487,7 +490,7 @@ async function processAndStorePaper(paper) {
       );
       const { data, error } = await supabase
         .from("arxivPapersData")
-        .update({ paperTables: [] })
+        .update({ paperTables: [], lastUpdated: new Date().toISOString() })
         .eq("id", paper.id);
       if (error) {
         console.error(`[PAPER PROCESSING] Database update error:`, error);
@@ -516,7 +519,7 @@ async function processAndStorePaper(paper) {
     );
     const { data, error: dbError } = await supabase
       .from("arxivPapersData")
-      .update({ paperTables: [] })
+      .update({ paperTables: [], lastUpdated: new Date().toISOString() })
       .eq("id", paper.id);
     if (dbError) {
       console.error(`[PAPER PROCESSING] Database update error:`, dbError);
