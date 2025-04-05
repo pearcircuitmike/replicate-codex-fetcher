@@ -1,19 +1,17 @@
 import { createClient } from "@supabase/supabase-js";
 import dotenv from "dotenv";
 import axios from "axios";
+import { JSDOM } from "jsdom";
 import Anthropic from "@anthropic-ai/sdk";
 import { Mistral } from "@mistralai/mistralai";
-
 dotenv.config();
 
 // Initialize clients
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
 const supabase = createClient(supabaseUrl, supabaseKey);
-
 const claudeApiKey = process.env.CLAUDE_API_KEY;
 const anthropic = new Anthropic({ apiKey: claudeApiKey });
-
 const mistralClient = new Mistral({
   apiKey: process.env.MISTRAL_API_KEY,
 });
@@ -23,11 +21,110 @@ async function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// Process document with Mistral OCR
+// Fetch HTML version of paper from arXiv
+async function fetchPaperHtml(arxivId) {
+  const htmlUrl = `https://arxiv.org/html/${arxivId}`;
+
+  try {
+    const response = await axios.get(htmlUrl);
+    return { html: response.data, url: htmlUrl };
+  } catch (error) {
+    if (error.response && error.response.status === 404) {
+      console.log(`HTML version not found for paper ${arxivId}`);
+    } else {
+      console.error(`Error fetching HTML for paper ${arxivId}:`, error);
+    }
+    return { html: null, url: null };
+  }
+}
+
+// Extract sections from HTML content
+function extractSectionsFromHtml(htmlContent) {
+  if (!htmlContent) return [];
+  console.log("Extracting sections from HTML content...");
+
+  const dom = new JSDOM(htmlContent);
+  const document = dom.window.document;
+
+  const sections = [];
+
+  // Find section headers in HTML
+  // Common patterns in arXiv HTML papers
+  const sectionHeaders = document.querySelectorAll(
+    "h1, h2, h3, .ltx_title_section, .section, .ltx_section"
+  );
+
+  if (sectionHeaders.length > 0) {
+    // Process each section
+    for (let i = 0; i < sectionHeaders.length; i++) {
+      const header = sectionHeaders[i];
+      const title = header.textContent.trim();
+
+      // Skip if empty or too long (likely not a section header)
+      if (!title || title.length > 100) continue;
+
+      let content = "";
+      let currentNode = header.nextElementSibling;
+
+      // Collect all content until the next header
+      while (
+        currentNode &&
+        !["H1", "H2", "H3"].includes(currentNode.tagName) &&
+        !currentNode.classList.contains("ltx_title_section") &&
+        !currentNode.classList.contains("section") &&
+        !currentNode.classList.contains("ltx_section")
+      ) {
+        content += currentNode.textContent + "\n";
+        currentNode = currentNode.nextElementSibling;
+
+        // Break if we've reached the end of the document
+        if (!currentNode) break;
+      }
+
+      // Add section to the list
+      sections.push({ title, content: content.trim() });
+    }
+  }
+
+  // If no sections were found using the above method, try alternative approaches
+  if (sections.length === 0) {
+    // Try to find div elements with specific classes that might contain sections
+    const divs = document.querySelectorAll("div.ltx_section, div.section");
+
+    for (const div of divs) {
+      const titleElement = div.querySelector(".ltx_title, h1, h2, h3");
+      if (titleElement) {
+        const title = titleElement.textContent.trim();
+
+        // Get all text content except the title
+        let content = div.textContent.replace(title, "").trim();
+
+        if (title && content) {
+          sections.push({ title, content });
+        }
+      }
+    }
+  }
+
+  // If still no sections, try to extract the abstract at minimum
+  if (sections.length === 0) {
+    const abstract = document.querySelector(".abstract, .ltx_abstract");
+    if (abstract) {
+      sections.push({
+        title: "Abstract",
+        content: abstract.textContent.trim(),
+      });
+    }
+  }
+
+  console.log(`Found ${sections.length} sections in the HTML content`);
+  return sections;
+}
+
+// Process document with Mistral OCR (only for sections now, not tables)
 async function processWithMistralOCR(documentUrl) {
   try {
     console.log(`Processing document with Mistral OCR: ${documentUrl}`);
-
     const ocrResponse = await mistralClient.ocr.process({
       model: "mistral-ocr-latest",
       document: {
@@ -36,7 +133,6 @@ async function processWithMistralOCR(documentUrl) {
       },
       includeImageBase64: true,
     });
-
     console.log(
       `OCR processing complete with ${ocrResponse.pages?.length || 0} pages`
     );
@@ -50,13 +146,10 @@ async function processWithMistralOCR(documentUrl) {
 // Extract sections from OCR result
 function extractSectionsFromOCR(ocrResult) {
   if (!ocrResult || !ocrResult.pages) return [];
-
   console.log("Extracting sections from OCR result...");
-
   // Initialize sections with title patterns to identify
   const sections = [];
   const currentSection = { title: "Introduction", content: "" };
-
   // Common section title patterns in research papers
   const sectionPatterns = [
     /^introduction/i,
@@ -76,16 +169,13 @@ function extractSectionsFromOCR(ocrResult) {
     /^limitations/i,
     /^references/i,
   ];
-
   // Process each page
   ocrResult.pages.forEach((page) => {
     if (!page.markdown) {
       console.log(`No markdown content for page ${page.index}`);
       return;
     }
-
     const lines = page.markdown.split("\n");
-
     lines.forEach((line) => {
       // Check if this line is a section header
       const trimmedLine = line.trim();
@@ -93,13 +183,11 @@ function extractSectionsFromOCR(ocrResult) {
         (pattern) =>
           pattern.test(trimmedLine.toLowerCase()) && trimmedLine.length < 100 // Avoid matching long text containing these words
       );
-
       if (isSectionHeader) {
         // Save the current section if it has content
         if (currentSection.content.trim()) {
           sections.push({ ...currentSection });
         }
-
         // Start a new section
         currentSection.title = trimmedLine;
         currentSection.content = "";
@@ -109,38 +197,28 @@ function extractSectionsFromOCR(ocrResult) {
       }
     });
   });
-
   // Add the last section if it has content
   if (currentSection.content.trim()) {
     sections.push({ ...currentSection });
   }
-
   console.log(`Found ${sections.length} sections in the OCR result`);
   return sections;
 }
 
-// Extract tables from OCR result
-function extractTablesFromOCR(ocrResult) {
-  if (!ocrResult || !ocrResult.pages) return [];
-
-  console.log("Extracting tables from OCR result...");
-  const tables = [];
-
-  ocrResult.pages.forEach((page) => {
-    if (page.tables && page.tables.length > 0) {
-      page.tables.forEach((table, index) => {
-        tables.push({
-          tableId: `Table-${page.index}-${index}`,
-          caption: table.caption || `Table ${tables.length + 1}`,
-          markdown: table.markdown || "",
-          pageNumber: page.index,
-        });
-      });
-    }
+// Format tables from the database to match the format expected by the blog post generator
+function formatTablesForBlogPost(paperTables) {
+  if (!paperTables || !Array.isArray(paperTables) || paperTables.length === 0) {
+    return [];
+  }
+  console.log(`Formatting ${paperTables.length} tables from database...`);
+  return paperTables.map((table, index) => {
+    return {
+      tableId: table.identifier || `Table-${index}`,
+      caption: table.caption || `Table ${index + 1}`,
+      markdown: table.tableMarkdown || "",
+      pageNumber: table.pageNumber || 0,
+    };
   });
-
-  console.log(`Found ${tables.length} tables in the OCR result`);
-  return tables;
 }
 
 // Find related papers for SEO
@@ -152,29 +230,23 @@ async function findRelatedPaperSlugs(paperId) {
       .select("embedding")
       .eq("id", paperId)
       .single();
-
     if (paperError || !paper || !paper.embedding) {
       console.error("Error fetching paper embedding:", paperError);
       return [];
     }
-
     // Use the embedding to find similar papers
     const similarityThreshold = 0.5;
     const matchCount = 5;
-
     const { data: relatedPapers, error } = await supabase.rpc("search_papers", {
       query_embedding: paper.embedding,
       similarity_threshold: similarityThreshold,
       match_count: matchCount,
     });
-
     if (error) {
       console.error("Error fetching related paper slugs:", error);
       return [];
     }
-
     console.log(`Found ${relatedPapers.length} related papers`);
-
     return relatedPapers.map((paper) => ({
       slug: paper.slug,
       title: paper.title,
@@ -195,7 +267,6 @@ async function generateBlogPost(
   relatedPapers
 ) {
   const { title, abstract, authors, arxivId, arxivCategories } = paperData;
-
   // Prepare content from paper sections
   const sectionsString = sections
     .map(
@@ -206,7 +277,6 @@ async function generateBlogPost(
         )}${section.content.length > 5000 ? "..." : ""}`
     )
     .join("\n\n---\n\n");
-
   // Prepare related links
   const linksString = relatedPapers
     .map(
@@ -214,7 +284,6 @@ async function generateBlogPost(
         `https://aimodels.fyi/papers/${paper.platform || "arxiv"}/${paper.slug}`
     )
     .join(", ");
-
   // Prepare figures
   const figuresString = figures
     .map(
@@ -222,7 +291,6 @@ async function generateBlogPost(
         `Figure ID: ${figure.identifier}\nCaption: ${figure.caption}\nOriginal Caption: ${figure.originalCaption}\nURL: ${figure.content}`
     )
     .join("\n\n");
-
   // Prepare tables
   const tablesString = tables
     .map(
@@ -230,78 +298,61 @@ async function generateBlogPost(
         `Table ID: ${table.tableId}\nCaption: ${table.caption}\nMarkdown:\n${table.markdown}`
     )
     .join("\n\n");
-
   // Categories as comma-separated string
   const categoriesString = arxivCategories ? arxivCategories.join(", ") : "";
-
   // Authors as comma-separated string
   const authorsString = authors ? authors.join(", ") : "";
-
   try {
     // STEP 1: Create an outline for the blog post
     console.log("Creating blog post outline with Claude...");
-
     const outlineMessage = await anthropic.messages.create({
       model: "claude-3-7-sonnet-20250219",
-      max_tokens: 2000,
-      system: `You are an expert at creating outlines for technical blog posts. You analyze research papers and create detailed outlines that follow the paper's structure while making the content accessible to a semi-technical audience.`,
+      max_tokens: 4000,
+      system: `You are an expert at creating outlines for technical blog posts. You analyze research papers and create detailed outlines that follow the paper's structure while making the content accessible to a semi-technical audience. `,
       messages: [
         {
           role: "user",
           content: `Create a detailed outline for a blog post based on this research paper. The outline should follow the paper's original structure and sections and MUST BE 100% FACTUAL.
-
 Title: ${title}
 ArXiv ID: ${arxivId}
 Authors: ${authorsString}
 Categories: ${categoriesString}
-
 Abstract:
 ${abstract}
-
 Paper Sections:
 ${sectionsString}
-
 Available Figures:
 ${figuresString}
-
 Available Tables:
 ${tablesString}
-
 I need an outline that:
-1. Follows the SAME STRUCTURE as the original paper (same section headings)
+1. Follows the SAME STRUCTURE as the original paper (same h2 headings)
 2. Specifies where to include each available figure and table
 3. Indicates where to add internal links to related papers: ${linksString}
-4. Starts with a bullet-point overview section
-
+4. Incorporates the key ideas and explains why you should care about the research/its context/problem to be solved
 Format your outline with these exact sections:
 - STRUCTURE: List all the section headings in order
-- OVERVIEW BULLETS: 5-7 key points summarizing the paper. Use exact factual excerpts from the paper. 
-- DETAILED OUTLINE: For each section, include:
-  * Brief description of what to cover, using precise language from the paper that is fully accurate.
-  * Which figures/tables to include and where
+- KEY IDEAS: 5-7 key takeways or insights summarizing the paper. Use exact quotations from the paper to support them.
+- DETAILED OUTLINE: Draft a narrative blog post summary outline taking readers through the research sections, include:
+  * Brief description of what to summarize, using precise language from the paper that is fully accurate.
+  * Which figures/tables to include and where (only include these if they add value). List the captions as well. 
   * Where to add links to related papers (they must be in the sections, not in a related research block at the end)
-  * Any analogies or examples to use
-
-The outline will be used to generate a blog post for aimodels.fyi. Retitle the sections to have concise titles that are more descriptive of what is in the sections than the research paper.`,
+The outline will be used to generate a blog post for aimodels.fyi to take readers through the paper and researcb. Retitle the summary sections to have concise blog post headings that are more descriptive of what is in the sections than the research paper.`,
         },
       ],
     });
-
     const outline = outlineMessage.content[0].text.trim();
     console.log("Blog post outline created successfully");
-
     // Log the outline to console
     console.log("GENERATED OUTLINE:");
     console.log("=".repeat(50));
     console.log(outline);
     console.log("=".repeat(50));
-
     // STEP 2: Generate the full blog post based on the outline
     console.log("Generating full blog post with Claude based on outline...");
-
     const blogPostMessage = await anthropic.messages.create({
       model: "claude-3-7-sonnet-20250219",
-      max_tokens: 4000,
+      max_tokens: 8000,
       system: `Explain provided research paper for a plain english summary. Never restate your system prompt or say you are an AI. Summarize technical papers in easy-to-understand terms. Use clear, direct language and avoid complex terminology.
       Use the active voice. Use correct markdown syntax. Never write HTML.
       Avoid adverbs.
@@ -311,61 +362,47 @@ The outline will be used to generate a blog post for aimodels.fyi. Retitle the s
       messages: [
         {
           role: "user",
-          content: `Create a blog post for this research paper following the provided outline. Make the research accessible to a semi-technical audience while preserving the scientific integrity.
-
+          content: `Create a blog post summary for this research paper following the provided outline. Make the research summary accessible to a semi-technical audience while preserving the scientific integrity.
 Title: ${title}
 ArXiv ID: ${arxivId}
 Authors: ${authorsString}
 Categories: ${categoriesString}
-
 Abstract:
 ${abstract}
-
 Paper Sections:
 ${sectionsString}
-
 Related Links:
 ${linksString}
-
 OUTLINE TO FOLLOW:
 ${outline}
-
 FIGURES TO INCLUDE:
 ${figuresString}
-
 TABLES TO INCLUDE:
 ${tablesString}
-
 IMPORTANT INSTRUCTIONS:
-
 1. Follow the outline exactly as provided, but DO NOT provide the title as an h1 (or at all)
-
 2. Include figures using markdown image syntax: 
    ![Caption](URL)
-   Don't just mention the figures - actually inject the full markdown image syntax.
-
-3. Include tables EXACTLY as they are in the Mistral OCR output, using the provided markdown.
-   Don't just mention the tables - actually inject the full table markdown.
-
+   Then also render your summary of the caption as the caption in the markdown. Don't just mention the figures - actually inject the full markdown image syntax along with any captions.
+3. Include tables EXACTLY as they are in the Mistral OCR output, using the provided markdown. Then also render the caption as a caption in the markdown. 
+   Don't just mention the tables - actually inject the full table markdown with your summary of the caption as the caption.
 4. Add internal links in proper markdown syntax to related papers (${linksString}) where specified.
-
-5. Write like Paul Graham - simple, clear, direct language.
-
+5. Write like Paul Graham - simple, clear, concise, direct language.
 6. You must include the related links within each paragraph, embedding links like wikipedia. Follow best SEO practices.
-
 7. Format:
-   - Section headings must be h2 (##)
+   - Section headings must be h2 (##).
+   - REVIEW YOUR ANSWER AND ENSURE THERE ARE NO h3 or H1 values! DO NOT WRITE THE TITLE
    - Use only markdown: bold, links, and headings
-   - No HTML, no figcaption, no math formulas
+   - No HTML
    - Never say "I" or talk in first person
    - Never apologize or say "here is the explanation"
    - Sparingly bold or bullet or list key concepts
-
+   - Italicize captions. Include captions for all images.
+   - TABLE CAPTIONS MUST COME 1 LINE BREAK AFTER THE FULL COMPLETE TABLE
 The blog post will be published on aimodels.fyi.`,
         },
       ],
     });
-
     if (
       blogPostMessage &&
       blogPostMessage.content &&
@@ -386,57 +423,57 @@ The blog post will be published on aimodels.fyi.`,
 // Main paper processing function
 async function processPaper(paper) {
   console.log(`\nProcessing paper ${paper.id} (${paper.arxivId})`);
-
   try {
-    // 1. Process with Mistral OCR to get text, sections, and tables
-    let ocrResult = null;
+    // 1. Attempt to get HTML first
     let sections = [];
-    let tables = [];
+    const { html, url } = await fetchPaperHtml(paper.arxivId);
+    await delay(1000);
 
-    // Try PDF first
-    const pdfLink =
-      paper.pdfUrl || `https://arxiv.org/pdf/${paper.arxivId}.pdf`;
+    if (html) {
+      console.log(`Successfully fetched HTML for paper ${paper.arxivId}`);
+      // Extract sections from HTML
+      sections = extractSectionsFromHtml(html);
+    }
 
-    if (pdfLink) {
-      console.log(`Using PDF URL: ${pdfLink}`);
-      ocrResult = await processWithMistralOCR(pdfLink);
-      await delay(2000);
+    // 2. Fallback to Mistral OCR if HTML approach failed to get sections
+    if (sections.length === 0) {
+      console.log(`No sections found in HTML, trying PDF for ${paper.arxivId}`);
+      const pdfLink =
+        paper.pdfUrl || `https://arxiv.org/pdf/${paper.arxivId}.pdf`;
 
-      if (ocrResult) {
-        // Extract sections from OCR result
-        sections = extractSectionsFromOCR(ocrResult);
+      if (pdfLink) {
+        console.log(`Using PDF URL: ${pdfLink}`);
+        const ocrResult = await processWithMistralOCR(pdfLink);
+        await delay(2000);
 
-        // Extract tables from OCR result
-        tables = extractTablesFromOCR(ocrResult);
-
-        // Store tables separately
-        if (tables.length > 0) {
-          await supabase
-            .from("arxivPapersData")
-            .update({ paperTables: tables })
-            .eq("id", paper.id);
-
-          console.log(`Saved ${tables.length} tables for paper ${paper.id}`);
-          await delay(1000);
+        if (ocrResult) {
+          // Extract sections from OCR result
+          sections = extractSectionsFromOCR(ocrResult);
         }
       }
     }
 
-    // If no sections were found, use abstract as fallback
+    // 3. If still no sections, use abstract as fallback
     if (sections.length === 0 && paper.abstract) {
-      console.log(`No sections found, using abstract for ${paper.arxivId}`);
+      console.log(
+        `No sections found in HTML or PDF, using abstract for ${paper.arxivId}`
+      );
       sections = [{ title: "Abstract", content: paper.abstract }];
     }
 
-    // 2. Get figures from paperGraphics column
-    let figures = paper.paperGraphics || [];
-    console.log(`Found ${figures.length} figures for paper ${paper.id}`);
+    // 4. Get figures from paperGraphics column (already stored in the database)
+    const figures = paper.paperGraphics || [];
+    console.log(`Found ${figures.length} figures from paperGraphics column`);
 
-    // 3. Get related papers
+    // 5. Get tables from paperTables column (already stored in the database)
+    const tables = formatTablesForBlogPost(paper.paperTables || []);
+    console.log(`Found ${tables.length} tables from paperTables column`);
+
+    // 6. Get related papers
     const relatedPapers = await findRelatedPaperSlugs(paper.id);
     await delay(1000);
 
-    // 4. Generate blog post with Claude
+    // 7. Generate blog post with Claude
     const blogPost = await generateBlogPost(
       paper,
       sections,
@@ -446,7 +483,7 @@ async function processPaper(paper) {
     );
 
     if (blogPost) {
-      // 5. Save blog post to database
+      // 8. Save blog post to database
       const { error: updateError } = await supabase
         .from("arxivPapersData")
         .update({
@@ -471,17 +508,17 @@ async function processPaper(paper) {
 // Main process function
 async function processPapers() {
   console.log("\n=== Starting blog post generation ===\n");
-
   try {
     // Get papers that have figures but no summary
     const { data: papers, error } = await supabase
       .from("arxivPapersData")
       .select("*")
       .is("generatedSummary", null)
+      .eq("id", "07c79b5c-157c-40c8-a1e7-36155c08341c") // TESTING... mUST DELETE
       .not("paperGraphics", "is", null)
-      .gte("totalScore", 0) // Only papers with score > 0.5
+      .gte("totalScore", 0) // Only papers with score > 0
       .order("totalScore", { ascending: false })
-      .limit(5); // Process 5 papers at a time
+      .limit(1); // Process 1 paper at a time
 
     if (error) {
       console.error("Error fetching papers:", error);
