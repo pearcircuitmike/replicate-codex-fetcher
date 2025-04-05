@@ -540,7 +540,7 @@ async function main() {
         .gt("totalScore", 0.5)
         .gte("indexedDate", fourDaysAgo.toISOString())
         .order("totalScore", { ascending: false })
-        .range(startIndex, startIndex + BATCH_SIZE - 1);
+        .limit(BATCH_SIZE);
       const queryEndTime = new Date();
       const queryDuration = (queryEndTime - queryStartTime) / 1000;
       console.log(
@@ -613,7 +613,7 @@ async function main() {
           100
         ).toFixed(2)}%)`
       );
-      startIndex += BATCH_SIZE;
+      startIndex += BATCH_SIZE; // This line is no longer needed but kept for counting batches
       batchNumber++;
       // Break if we've processed all papers
       if (totalProcessed >= count) {
