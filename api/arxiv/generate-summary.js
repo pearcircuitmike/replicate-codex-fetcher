@@ -11,7 +11,7 @@ const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-const claudeApiKey = process.env.CLAUDE_API_KEY;
+const claudeApiKey = process.env.ANTHROPIC_PAPERS_GENERATE_SUMMARY_API_KEY;
 const anthropic = new Anthropic({ apiKey: claudeApiKey });
 
 const openaiApiKey = process.env.OPENAI_SECRET_KEY;

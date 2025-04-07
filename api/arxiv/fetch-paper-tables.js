@@ -20,7 +20,7 @@ const mistralClient = new Mistral({
 console.log("[INIT] Mistral OCR model initialized");
 
 // Human-like behavior constants for arxiv.org and PDF fetching
-const BATCH_SIZE = 20;
+const BATCH_SIZE = 200;
 const BASE_DELAY = 5000; // Base delay between actions
 const VARIANCE_FACTOR = 0.3; // 30% variance in timing
 const MIN_PAGE_VIEW_TIME = 5000; // Minimum time to view a page
@@ -521,9 +521,6 @@ async function processAndCleanTables(tables, arxivId) {
         } from page ${table.pageNumber || "unknown"}`
       );
 
-      // Simulate time spent analyzing this table
-      await delay(getHumanDelay(4000));
-
       // Add the table to processed tables without modifying the caption
       console.log(
         `[TABLE PROCESSING] Adding table with identifier: ${table.identifier}`
@@ -540,9 +537,6 @@ async function processAndCleanTables(tables, arxivId) {
       );
 
       processedTables.push(table);
-
-      // Take a small break between tables
-      await delay(getHumanDelay(2000));
     } catch (error) {
       console.error(
         `[TABLE PROCESSING] Error processing table ${index}:`,
@@ -649,9 +643,6 @@ async function processAndStorePaper(paper) {
       `[PAPER PROCESSING] Table extraction complete. Found ${extractedTables.length} tables`
     );
 
-    // Apply human-like delay to simulate reviewing extracted tables
-    await delay(getHumanDelay(5000));
-
     if (extractedTables.length > 0) {
       // Process and clean the tables
       console.log(`[PAPER PROCESSING] Starting table processing`);
@@ -689,18 +680,6 @@ async function processAndStorePaper(paper) {
         );
         limitedTables = processedTables.slice(0, 10);
       }
-
-      // Final review before saving
-      console.log(
-        `[PAPER PROCESSING] Preparing to save ${limitedTables.length} tables to database`
-      );
-      const reviewTime = getHumanDelay(5000);
-      console.log(
-        `[PAPER PROCESSING] Reviewing tables before database update (${Math.round(
-          reviewTime / 1000
-        )} seconds)...`
-      );
-      await delay(reviewTime);
 
       // Update the database
       console.log(`[PAPER PROCESSING] Updating database with processed tables`);

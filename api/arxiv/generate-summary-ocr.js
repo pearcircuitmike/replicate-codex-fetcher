@@ -4,17 +4,20 @@ import axios from "axios";
 import { JSDOM } from "jsdom";
 import Anthropic from "@anthropic-ai/sdk";
 import { Mistral } from "@mistralai/mistralai";
+import OpenAI from "openai";
 dotenv.config();
 
 // Initialize clients
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
 const supabase = createClient(supabaseUrl, supabaseKey);
-const claudeApiKey = process.env.CLAUDE_API_KEY;
+const claudeApiKey = process.env.ANTHROPIC_PAPERS_GENERATE_SUMMARY_API_KEY;
 const anthropic = new Anthropic({ apiKey: claudeApiKey });
 const mistralClient = new Mistral({
   apiKey: process.env.MISTRAL_API_KEY,
 });
+const openaiApiKey = process.env.OPENAI_SECRET_KEY;
+const openai = new OpenAI({ apiKey: openaiApiKey });
 
 // Delay function for rate limiting
 async function delay(ms) {
@@ -119,6 +122,22 @@ function extractSectionsFromHtml(htmlContent) {
 
   console.log(`Found ${sections.length} sections in the HTML content`);
   return sections;
+}
+
+// Extract first image for thumbnail
+function extractFirstImage(htmlContent, htmlUrl) {
+  if (!htmlContent) return null;
+
+  const dom = new JSDOM(htmlContent);
+  const document = dom.window.document;
+
+  const img = document.querySelector("figure img");
+  if (img) {
+    const source = `${htmlUrl}/${img.getAttribute("src")}`;
+    return source;
+  }
+
+  return null;
 }
 
 // Process document with Mistral OCR (only for sections now, not tables)
@@ -321,9 +340,9 @@ Abstract:
 ${abstract}
 Paper Sections:
 ${sectionsString}
-Available Figures:
+Available Figures (do not use figures if empty brackets):
 ${figuresString}
-Available Tables:
+Available Tables (do not use tables empty):
 ${tablesString}
 I need an outline that:
 1. Follows the SAME STRUCTURE as the original paper (same h2 headings)
@@ -399,7 +418,7 @@ IMPORTANT INSTRUCTIONS:
    - Sparingly bold or bullet or list key concepts
    - Italicize captions. Include captions for all images.
    - TABLE CAPTIONS MUST COME 1 LINE BREAK AFTER THE FULL COMPLETE TABLE
-The blog post will be published on aimodels.fyi.`,
+The blog post will be published on aimodels.fyi and YOU MAY NOT CLAIM TO BE THE RESEARCHERS - IT'S A BLOG SUMMARIZING THEIR WORK, DON'T SAY "WE PRESENT..." ETC - it's not your work it's theirs and you're summarizing it!`,
         },
       ],
     });
@@ -420,6 +439,51 @@ The blog post will be published on aimodels.fyi.`,
   }
 }
 
+// Create embedding for paper
+async function createEmbeddingForPaper(paper) {
+  console.log(`Creating embedding for paper ${paper.id} (${paper.arxivId})`);
+
+  const {
+    id,
+    title,
+    arxivCategories,
+    abstract,
+    authors,
+    lastUpdated,
+    arxivId,
+    generatedSummary,
+  } = paper;
+
+  const inputText = `${title || ""} ${arxivCategories || ""} ${
+    abstract || ""
+  } ${authors || ""} ${lastUpdated || ""} ${arxivId || ""} ${
+    generatedSummary || ""
+  } `;
+
+  try {
+    const embeddingResponse = await openai.embeddings.create({
+      model: "text-embedding-ada-002",
+      input: inputText,
+    });
+
+    const [{ embedding }] = embeddingResponse.data;
+
+    await supabase
+      .from("arxivPapersData")
+      .update({ embedding: embedding })
+      .eq("id", id);
+
+    console.log(`Embedding created and inserted for paper with id: ${id}`);
+    return embedding;
+  } catch (error) {
+    console.error(
+      `Failed to create embedding for paper with id: ${id}. Error:`,
+      error.message
+    );
+    return null;
+  }
+}
+
 // Main paper processing function
 async function processPaper(paper) {
   console.log(`\nProcessing paper ${paper.id} (${paper.arxivId})`);
@@ -428,6 +492,9 @@ async function processPaper(paper) {
     let sections = [];
     const { html, url } = await fetchPaperHtml(paper.arxivId);
     await delay(1000);
+
+    // Extract thumbnail if HTML is available
+    const thumbnail = html ? extractFirstImage(html, url) : null;
 
     if (html) {
       console.log(`Successfully fetched HTML for paper ${paper.arxivId}`);
@@ -483,11 +550,13 @@ async function processPaper(paper) {
     );
 
     if (blogPost) {
-      // 8. Save blog post to database
+      // 8. Save blog post to database and reset embedding (will be regenerated)
       const { error: updateError } = await supabase
         .from("arxivPapersData")
         .update({
           generatedSummary: blogPost,
+          thumbnail: thumbnail,
+          embedding: null,
           lastUpdated: new Date().toISOString(),
         })
         .eq("id", paper.id);
@@ -496,6 +565,9 @@ async function processPaper(paper) {
         console.error(`Error updating paper ${paper.id}:`, updateError);
       } else {
         console.log(`Successfully updated paper ${paper.id} with blog post`);
+
+        // 9. Create new embedding after generating the summary
+        await createEmbeddingForPaper(paper);
       }
     } else {
       console.log(`No blog post generated for paper ${paper.id}`);
@@ -509,16 +581,14 @@ async function processPaper(paper) {
 async function processPapers() {
   console.log("\n=== Starting blog post generation ===\n");
   try {
-    // Get papers that have figures but no summary
+    // Get papers that have no summary but do have embeddings
+    // This follows the selection logic from the older code
     const { data: papers, error } = await supabase
       .from("arxivPapersData")
       .select("*")
       .is("generatedSummary", null)
-      .eq("id", "b32aa4a0-fb9b-41e4-9a6c-fadf43f41cbf") // TESTING... mUST DELETE
-      .not("paperGraphics", "is", null)
-      .gte("totalScore", 0) // Only papers with score > 0
-      .order("totalScore", { ascending: false })
-      .limit(1); // Process 1 paper at a time
+      .not("embedding", "is", null)
+      .order("totalScore", { ascending: false });
 
     if (error) {
       console.error("Error fetching papers:", error);

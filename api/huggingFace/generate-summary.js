@@ -12,7 +12,7 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 
 const openai = new OpenAI({ apiKey: openaiApiKey });
 
-const claudeApiKey = process.env.CLAUDE_API_KEY;
+const claudeApiKey = process.env.ANTHROPIC_HUGGINGFACE_GENERATE_SUMMARY_API_KEY;
 const anthropic = new Anthropic({ apiKey: claudeApiKey });
 
 // Function to truncate text to stay within token limit

@@ -26,7 +26,7 @@ async function generateTitle(summary, abstract, paper_title) {
 
   try {
     const message = await anthropic.messages.create({
-      model: "claude-3-5-sonnet-20241022",
+      model: "claude-3-haiku-20240307",
       max_tokens: MAX_TOKENS,
       messages: [
         {
