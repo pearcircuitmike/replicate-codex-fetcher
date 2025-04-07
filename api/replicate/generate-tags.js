@@ -1,14 +1,17 @@
 import { createClient } from "@supabase/supabase-js";
 import dotenv from "dotenv";
-import Anthropic from "@anthropic-ai/sdk";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 dotenv.config();
 
-const claudeApiKey = process.env.CLAUDE_API_KEY;
+const geminiApiKey = process.env.GEMINI_API_KEY;
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
 const supabase = createClient(supabaseUrl, supabaseKey);
-const anthropic = new Anthropic({ apiKey: claudeApiKey });
+const genAI = new GoogleGenerativeAI(geminiApiKey);
+const geminiModel = genAI.getGenerativeModel({
+  model: "gemini-2.0-flash",
+});
 
 const types = ["Text", "Image", "Audio", "Video"];
 const classificationCategories = types.flatMap((fromType) =>
@@ -92,19 +95,18 @@ export async function generateTags() {
     console.log(`Prompt: ${prompt}`); // Log the prompt for debugging purposes
 
     try {
-      const response = await anthropic.messages.create({
-        model: "claude-3-haiku-20240307",
-        max_tokens: 20,
-        messages: [
-          {
-            role: "user",
-            content: prompt,
-          },
-        ],
+      const result = await geminiModel.generateContent({
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        generationConfig: {
+          maxOutputTokens: 20,
+        },
       });
 
-      const category = response.content[0].text.replace(/[^\w\s-]/g, "").trim();
-      console.log(`Claude Response: ${category}`);
+      const category = result.response
+        .text()
+        .trim()
+        .replace(/[^\w\s-]/g, "");
+      console.log(`Gemini Response: ${category}`);
 
       if (classificationCategories.includes(category)) {
         const currentDate = new Date().toISOString();

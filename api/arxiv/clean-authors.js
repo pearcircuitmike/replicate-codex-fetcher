@@ -1,15 +1,17 @@
 import "dotenv/config";
 import { createClient } from "@supabase/supabase-js";
-import OpenAI from "openai";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 // 1. Initialize Supabase
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-// 2. Initialize OpenAI
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_SECRET_KEY,
+// 2. Initialize Gemini
+const geminiApiKey = process.env.GEMINI_API_KEY;
+const genAI = new GoogleGenerativeAI(geminiApiKey);
+const geminiModel = genAI.getGenerativeModel({
+  model: "gemini-2.0-flash",
 });
 
 // (A) Helper function to process a batch of rows
@@ -18,11 +20,10 @@ async function processBatch(rows) {
     console.log(`  Cleaning row ID: ${row.id}`);
     const arrayToSend = row.authors;
 
-    // ----- SAME PROMPT YOU HAD BEFORE -----
     const messageContent = `
 I have a lot of mangled arrays with LaTeX-like values or diacritics that need to be fixed.
-I'll give you the array, and you return the corrected array with the authors' proper unicode
-(and nothing else, just the array).
+I'll give you the array, and you return the corrected array with the authors' proper unicode.
+IMPORTANT: Return ONLY the JSON array with no markdown formatting, no code blocks, and no additional text.
 
 Example:
 Input: ["Maia Trower","Natav{s}a Djurdjevac Conrad","Stefan Klus"]
@@ -32,18 +33,15 @@ Now fix this array: ${JSON.stringify(arrayToSend)}
     `;
 
     try {
-      const completion = await openai.chat.completions.create({
-        model: "gpt-4o-mini", // or "gpt-4o"
-        messages: [
-          {
-            role: "developer",
-            content: messageContent,
-          },
-        ],
+      const result = await geminiModel.generateContent({
+        contents: [{ role: "user", parts: [{ text: messageContent }] }],
+        generationConfig: {
+          maxOutputTokens: 1024,
+        },
       });
 
       // LLM's cleaned output
-      const cleanedString = completion.choices[0].message.content.trim();
+      const cleanedString = result.response.text().trim();
       console.log("    Original Authors:", JSON.stringify(row.authors));
       console.log("    Cleaned Authors: ", cleanedString);
 
@@ -62,7 +60,7 @@ Now fix this array: ${JSON.stringify(arrayToSend)}
         console.log(`    Successfully updated row ${row.id}.`);
       }
     } catch (err) {
-      console.error(`    OpenAI API Error for row ${row.id}:`, err);
+      console.error(`    Gemini API Error for row ${row.id}:`, err);
     }
   }
 }

@@ -1,7 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import dotenv from "dotenv";
 import axios from "axios";
-import Anthropic from "@anthropic-ai/sdk";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 dotenv.config();
 
@@ -10,8 +10,11 @@ const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 const devToApiKey = process.env.DEVTO_API_KEY;
-const claudeApiKey = process.env.CLAUDE_API_KEY;
-const anthropic = new Anthropic({ apiKey: claudeApiKey });
+const geminiApiKey = process.env.GEMINI_API_KEY;
+const genAI = new GoogleGenerativeAI(geminiApiKey);
+const geminiModel = genAI.getGenerativeModel({
+  model: "gemini-2.0-flash",
+});
 
 const MAX_TITLE_LENGTH = 128;
 const MAX_PROMPT_LENGTH = 8000;
@@ -25,25 +28,30 @@ async function generateTitle(summary, abstract, paper_title) {
       : inputText;
 
   try {
-    const message = await anthropic.messages.create({
-      model: "claude-3-haiku-20240307",
-      max_tokens: MAX_TOKENS,
-      messages: [
+    const result = await geminiModel.generateContent({
+      contents: [
         {
           role: "user",
-          content: `Generate a concise, click-driving factual title for the following research paper summary. The title must be no longer than ${MAX_TITLE_LENGTH} characters and should not be enclosed in quotes. Never admit you are an AI or restate the prompt or make any mention of my instructions, just reply exactly with the title and nothing else:
+          parts: [
+            {
+              text: `Generate a concise, click-driving factual title for the following research paper summary. The title must be no longer than ${MAX_TITLE_LENGTH} characters and should not be enclosed in quotes. Never admit you are an AI or restate the prompt or make any mention of my instructions, just reply exactly with the title and nothing else:
          paper title: ${paper_title}
          paper: ${truncatedText}`,
+            },
+          ],
         },
       ],
+      generationConfig: {
+        maxOutputTokens: MAX_TOKENS,
+      },
     });
 
-    let generatedTitle = message.content[0].text.trim();
+    let generatedTitle = result.response.text().trim();
     return generatedTitle.length > MAX_TITLE_LENGTH
       ? generatedTitle.substring(0, MAX_TITLE_LENGTH)
       : generatedTitle;
   } catch (error) {
-    console.error("Error generating title with Claude:", error);
+    console.error("Error generating title with Gemini:", error);
     return null;
   }
 }
@@ -52,7 +60,7 @@ async function publishArticleToDev(article) {
   const { id, title, generatedSummary, thumbnail, slug, abstract } = article;
 
   try {
-    // Generate a new title using Claude
+    // Generate a new title using Gemini
     const generatedTitle = await generateTitle(
       generatedSummary,
       abstract,
