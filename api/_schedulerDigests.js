@@ -29,7 +29,7 @@ function runScript(scriptPath) {
   });
 }
 
-// Run daily and weekly scripts in sequence
+// Run community digest scripts in sequence
 async function runAllDigests() {
   if (isRunning) {
     console.log("Digests are already running. Skipping this run.");
@@ -37,18 +37,12 @@ async function runAllDigests() {
   }
   isRunning = true;
 
-  console.log("Starting daily and weekly digests...");
+  console.log("Starting community digests...");
   try {
-    // 1) Daily digest
-    await runScript("api/resend/send-daily-digest.js");
-
-    // 2) Daily digest for community
+    // 1) Daily digest for community
     await runScript("api/resend/send-daily-digest-community.js");
 
-    // 3) Weekly digest
-    await runScript("api/resend/send-weekly-digest.js");
-
-    // 4) Weekly digest for community
+    // 2) Weekly digest for community
     await runScript("api/resend/send-weekly-digest-community.js");
 
     console.log("All digest scripts finished.");
@@ -62,11 +56,11 @@ async function runAllDigests() {
 // Schedule: run each day at 13:45 UTC
 // (8:45 AM ET Standard Time, or 9:45 AM ET during Daylight Saving)
 cron.schedule("45 13 * * *", () => {
-  console.log("13:45 UTC reached. Starting daily and weekly digests...");
+  console.log("13:45 UTC reached. Starting community digests...");
   runAllDigests();
 });
 
 // Initial log
 console.log(
-  "Digest scheduler started. Will run daily and weekly at 13:45 UTC."
+  "Digest scheduler started. Will run community digests daily at 13:45 UTC."
 );

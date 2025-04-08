@@ -13,7 +13,7 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 // Initialize Gemini
 const geminiApiKey = process.env.GEMINI_API_KEY;
 const genAI = new GoogleGenerativeAI(geminiApiKey);
-const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-8b" });
+const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
 // Initialize OpenAI client
 const openaiApiKey = process.env.OPENAI_SECRET_KEY;
@@ -51,7 +51,7 @@ Summary: ${generatedSummary}
 ${tasksList.join("\n")}
 
 **Instructions:**
-Based on the title, summary and abstract, list all relevant tasks from the above list that apply to this paper. Provide only the task names, each on a new line.
+Based on the title, summary and abstract, list the three MOST relevant tasks from the above list that apply to this paper. Provide only the task names, each on a new line.
 
 **Response Format:**
 - Task Name 1
