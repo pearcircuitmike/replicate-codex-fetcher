@@ -793,7 +793,6 @@ async function main() {
       .from("arxivPapersData")
       .select("id", { count: "exact" })
       .is("paperTables", null)
-      .gt("totalScore", 0.5)
       .gte("indexedDate", fourDaysAgo.toISOString());
 
     if (countError) {
@@ -818,7 +817,7 @@ async function main() {
     while (hasMore) {
       // Take breaks between sessions
       if (startIndex > 0) {
-        const sessionBreak = getHumanDelay(300000); // 5-minute average break
+        const sessionBreak = getHumanDelay(30000); // 30-s average break
         console.log(
           `[MAIN] Taking a break between batches (${Math.round(
             sessionBreak / 1000
@@ -844,7 +843,7 @@ async function main() {
         .from("arxivPapersData")
         .select("id, arxivId, pdfUrl")
         .is("paperTables", null)
-        .gt("totalScore", 0.5)
+        .gte("totalScore", 0)
         .gte("indexedDate", fourDaysAgo.toISOString())
         .order("totalScore", { ascending: false })
         .range(startIndex, startIndex + BATCH_SIZE - 1);

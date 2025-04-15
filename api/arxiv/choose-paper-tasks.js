@@ -1,6 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
 import dotenv from "dotenv";
-import OpenAI from "openai";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
 dotenv.config();
@@ -15,12 +14,6 @@ const geminiApiKey = process.env.GEMINI_API_KEY;
 const genAI = new GoogleGenerativeAI(geminiApiKey);
 const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
-// Initialize OpenAI client
-const openaiApiKey = process.env.OPENAI_SECRET_KEY;
-const openai = new OpenAI({
-  apiKey: openaiApiKey,
-});
-
 // Constants
 const RATE_LIMIT_DELAY = 200; // 200ms between API calls
 const BATCH_SIZE = 1000; // Process 1000 papers at a time
@@ -30,7 +23,7 @@ async function delay(ms) {
 }
 
 async function categorizePaper(paper, tasksList) {
-  const { title, abstract, generatedSummary } = paper;
+  const { title, abstract } = paper;
 
   try {
     const prompt = {
@@ -45,13 +38,11 @@ async function categorizePaper(paper, tasksList) {
 Title: ${title}
 Abstract: ${abstract}
 
-Summary: ${generatedSummary}
-
 **Available Tasks:**
 ${tasksList.join("\n")}
 
 **Instructions:**
-Based on the title, summary and abstract, list the three MOST relevant tasks from the above list that apply to this paper. Provide only the task names, each on a new line.
+Based on the title, summary and abstract, list up to the three MOST relevant tasks from the above list that apply to this paper. Provide only the task names, each on a new line.
 
 **Response Format:**
 - Task Name 1
@@ -101,27 +92,49 @@ function mapTaskNamesToIds(taskNames, allTasks) {
     taskIdMap.set(task.task.toLowerCase(), task.id);
   });
 
-  const taskIds = taskNames
-    .map((name) => taskIdMap.get(name.toLowerCase()))
-    .filter((id) => id !== undefined);
+  // Create a map for logging task name to ID
+  const mappedTasks = [];
+  const taskIds = [];
 
-  return taskIds;
+  taskNames.forEach((name) => {
+    const id = taskIdMap.get(name.toLowerCase());
+    if (id !== undefined) {
+      taskIds.push(id);
+      mappedTasks.push({ name, id });
+    }
+  });
+
+  return { taskIds, mappedTasks };
 }
 
 async function processPaperBatch(papers, tasksList, allTasks) {
   for (const paper of papers) {
     try {
+      console.log(`\n----- Processing Paper -----`);
+      console.log(`ID: ${paper.id}`);
+      console.log(`Title: ${paper.title}`);
+      console.log(
+        `Abstract (first 100 chars): ${paper.abstract?.substring(0, 100)}...`
+      );
+
       const taskNames = await categorizePaper(paper, tasksList);
       if (taskNames.length === 0) {
         console.log(`No relevant tasks found for paper ${paper.id}.`);
         continue;
       }
 
-      const taskIds = mapTaskNamesToIds(taskNames, allTasks);
+      console.log(`Chosen Tasks: ${taskNames.join(", ")}`);
+
+      const { taskIds, mappedTasks } = mapTaskNamesToIds(taskNames, allTasks);
       if (taskIds.length === 0) {
         console.log(`No valid task IDs found for paper ${paper.id}.`);
         continue;
       }
+
+      console.log(`Mapped Tasks:`);
+      mappedTasks.forEach((task) => {
+        console.log(`  - ${task.name} (ID: ${task.id})`);
+      });
 
       const { error: updateError } = await supabase
         .from("arxivPapersData")
@@ -152,6 +165,7 @@ async function assignTasksToPapers() {
     return;
   }
 
+  console.log(`Loaded ${allTasks.length} tasks from database`);
   const tasksList = allTasks.map((task) => task.task);
 
   let processedCount = 0;

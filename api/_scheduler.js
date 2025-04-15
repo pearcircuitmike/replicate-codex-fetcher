@@ -11,12 +11,15 @@ const logWithTimestamp = (message) => {
 const runScript = (scriptPath) => {
   return new Promise((resolve, reject) => {
     const script = spawn("node", [scriptPath]);
+
     script.stdout.on("data", (data) => {
       console.log(`[${scriptPath}] ${data.toString().trim()}`);
     });
+
     script.stderr.on("data", (data) => {
       console.error(`[${scriptPath}] ${data.toString().trim()}`);
     });
+
     script.on("close", (code) => {
       if (code === 0) {
         console.log(`[${scriptPath}] Script execution completed successfully.`);
@@ -64,6 +67,14 @@ cron.schedule("05 06 * * *", async () => {
     // New: update Hugging Face score script
     await runScript("api/arxiv/update-huggingFace-score.js");
     await runScript("api/arxiv/generate-summary.js");
+
+    // -----------------------------------------------
+    // Insert the three new calls right after generate-summary.js
+    // -----------------------------------------------
+    await runScript("api/arxiv/fetch-paper-graphics.js");
+    await runScript("api/arxiv/fetch-paper-tables.js");
+    await runScript("api/arxiv/generate-summary-ocr.js");
+
     await runScript("api/arxiv/publish-to-devto.js");
     await runScript("api/arxiv/publish-to-hashnode.js");
     await runScript("api/arxiv/publish-to-reddit.js");

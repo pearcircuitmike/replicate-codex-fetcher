@@ -550,7 +550,7 @@ async function processPaper(paper) {
     );
 
     if (blogPost) {
-      // 8. Save blog post to database and reset embedding (will be regenerated)
+      // 8. Save blog post to database, set enhancedSummaryCreatedAt, and reset embedding (will be regenerated)
       const { error: updateError } = await supabase
         .from("arxivPapersData")
         .update({
@@ -558,6 +558,7 @@ async function processPaper(paper) {
           thumbnail: thumbnail,
           embedding: null,
           lastUpdated: new Date().toISOString(),
+          enhancedSummaryCreatedAt: new Date().toISOString(), // Set the timestamp when enhanced summary is created
         })
         .eq("id", paper.id);
 
@@ -581,13 +582,24 @@ async function processPaper(paper) {
 async function processPapers() {
   console.log("\n=== Starting blog post generation ===\n");
   try {
-    // Get papers that have no summary but do have embeddings
-    // This follows the selection logic from the older code
+    // Get date 48 hours ago
+    const now = new Date();
+    const hoursAgo48 = new Date(now);
+    hoursAgo48.setHours(now.getHours() - 48);
+
+    console.log(
+      `Looking for papers indexed in the last 48 hours (since ${hoursAgo48.toISOString()})`
+    );
+
+    // Get papers indexed within the last 48 hours with required fields
     const { data: papers, error } = await supabase
       .from("arxivPapersData")
       .select("*")
-      .is("generatedSummary", null)
+      .is("enhancedSummaryCreatedAt", null)
       .not("embedding", "is", null)
+      .not("paperGraphics", "is", null)
+      .not("paperTables", "is", null)
+      .gte("indexedDate", hoursAgo48.toISOString())
       .order("totalScore", { ascending: false });
 
     if (error) {

@@ -3,28 +3,23 @@ import dotenv from "dotenv";
 import axios from "axios";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import * as cheerio from "cheerio";
-
 dotenv.config();
-
 // Initialize clients
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_KEY
 );
-
 // Log initialization
 console.log("[INIT] Initializing services...");
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 console.log("[INIT] Gemini 2.0 Flash model initialized");
-
 // Human-like behavior constants for arxiv.org only
 const BATCH_SIZE = 200;
 const BASE_DELAY = 5000; // Base delay between actions
 const VARIANCE_FACTOR = 0.3; // 30% variance in timing
 const MIN_PAGE_VIEW_TIME = 5000; // Minimum time to view a page
 const MAX_PAGE_VIEW_TIME = 15000; // Maximum time to view a page
-
 // Browser simulation headers
 const browserHeaders = {
   "User-Agent":
@@ -33,14 +28,12 @@ const browserHeaders = {
   "Accept-Language": "en-US,en;q=0.9",
   Connection: "keep-alive",
 };
-
 // Simulate human-like delay (for arxiv.org only)
 function getHumanDelay(baseTime) {
   const variance = baseTime * VARIANCE_FACTOR;
   const randomVariance = (Math.random() - 0.5) * 2 * variance;
   return Math.max(baseTime + randomVariance, 1000);
 }
-
 function getReadingTime(text) {
   // Simplified reading time calculation
   return Math.min(
@@ -48,11 +41,9 @@ function getReadingTime(text) {
     MAX_PAGE_VIEW_TIME
   );
 }
-
 async function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
-
 // New function to extract figures from HTML using Cheerio
 async function extractFiguresWithCheerio(html, arxivId) {
   console.log(
@@ -62,26 +53,20 @@ async function extractFiguresWithCheerio(html, arxivId) {
     const $ = cheerio.load(html);
     const figures = [];
     const processedImages = new Set(); // Track processed images to avoid duplicates
-
     console.log(`[HTML PARSER] Looking for image tags in HTML...`);
-
     // Find all img tags and process them
     const imgCount = $("img").length;
     console.log(`[HTML PARSER] Found ${imgCount} total images in the document`);
-
     $("img").each((i, el) => {
       const img = $(el);
       const src = img.attr("src");
-
       // Skip if no source or already processed
       if (!src || processedImages.has(src)) {
         return;
       }
-
       console.log(
         `[HTML PARSER] Processing image ${i + 1}/${imgCount}: ${src}`
       );
-
       // Find the container element
       let container = img.closest(
         'figure, div.figure, [class*="figure"], [class*="image"]'
@@ -89,10 +74,8 @@ async function extractFiguresWithCheerio(html, arxivId) {
       if (!container.length) {
         container = img.parent();
       }
-
       // Find caption from multiple sources
       let caption = "";
-
       // 1. Check for figcaption
       const figcaption = container.find("figcaption").first();
       if (figcaption.length) {
@@ -101,7 +84,6 @@ async function extractFiguresWithCheerio(html, arxivId) {
           `[HTML PARSER] Found figcaption: ${caption.substring(0, 50)}...`
         );
       }
-
       // 2. Check for caption class
       if (!caption) {
         const captionEl = container
@@ -117,7 +99,6 @@ async function extractFiguresWithCheerio(html, arxivId) {
           );
         }
       }
-
       // 3. Check for adjacent paragraph with figure reference
       if (!caption) {
         const nextP = img.next("p");
@@ -131,7 +112,6 @@ async function extractFiguresWithCheerio(html, arxivId) {
           );
         }
       }
-
       // 4. Look for any nearby paragraph with figure reference
       if (!caption) {
         container.find("p").each((i, p) => {
@@ -148,7 +128,6 @@ async function extractFiguresWithCheerio(html, arxivId) {
           }
         });
       }
-
       // 5. Check image alt text for additional info
       const altText = img.attr("alt") || "";
       if (altText && altText.match(/figure|fig\.?\s*\d+/i)) {
@@ -157,7 +136,6 @@ async function extractFiguresWithCheerio(html, arxivId) {
           caption = altText;
         }
       }
-
       // Skip if caption suggests this is a table
       if (isTableCaption(caption)) {
         console.log(
@@ -168,10 +146,8 @@ async function extractFiguresWithCheerio(html, arxivId) {
         );
         return;
       }
-
       // Extract figure number
       let figNumber = figures.length + 1;
-
       // Try to get figure number from caption, alt text, or image source
       const figMatch = caption.match(/figure\s+(\d+)|fig\.?\s*(\d+)/i);
       if (figMatch) {
@@ -200,16 +176,13 @@ async function extractFiguresWithCheerio(html, arxivId) {
           }
         }
       }
-
       // Mark image as processed
       processedImages.add(src);
-
       // Create caption info
       const originalCaption = caption;
       const shortCaption = createShortCaption(caption);
       console.log(`[HTML PARSER] Original caption: ${originalCaption}`);
       console.log(`[HTML PARSER] Simplified caption: ${shortCaption}`);
-
       // Add to figures array
       addFigure(figures, {
         type: "figure",
@@ -219,17 +192,13 @@ async function extractFiguresWithCheerio(html, arxivId) {
         identifier: `Figure-${figNumber}`,
         originalCaption: originalCaption || `Figure ${figNumber}`,
       });
-
       console.log(`[HTML PARSER] Added figure ${figNumber} to collection`);
     });
-
     console.log(
       `[HTML PARSER] Initial extraction found ${figures.length} figures`
     );
-
     // Sort figures by index
     figures.sort((a, b) => a.index - b.index);
-
     // Ensure sequential numbering with no gaps
     for (let i = 0; i < figures.length; i++) {
       if (i === 0 || figures[i].index > figures[i - 1].index + 1) {
@@ -244,11 +213,9 @@ async function extractFiguresWithCheerio(html, arxivId) {
         );
       }
     }
-
     console.log(
       `[HTML PARSER] Final count: ${figures.length} figures extracted with Cheerio`
     );
-
     // If we found no figures with Cheerio, fall back to Gemini
     if (figures.length === 0) {
       console.log(
@@ -256,7 +223,6 @@ async function extractFiguresWithCheerio(html, arxivId) {
       );
       return processHtmlWithGemini(html, arxivId);
     }
-
     return figures;
   } catch (error) {
     console.error(`[HTML PARSER] Error extracting figures:`, error);
@@ -264,11 +230,9 @@ async function extractFiguresWithCheerio(html, arxivId) {
     return processHtmlWithGemini(html, arxivId);
   }
 }
-
 // Helper to check if a caption belongs to a table
 function isTableCaption(caption) {
   if (!caption) return false;
-
   const lowerCaption = caption.toLowerCase();
   return (
     /^table\s+\d+|^tab(\.|le)?\s*\d+/i.test(caption) ||
@@ -278,38 +242,30 @@ function isTableCaption(caption) {
     lowerCaption.includes("statistical table")
   );
 }
-
 // Helper to create a short caption from the full caption
 function createShortCaption(caption) {
   if (!caption) return "";
-
   // Try to identify and remove figure prefix patterns
   const prefixMatch = caption.match(/^(?:figure|fig\.?)\s+\d+[:.]\s*(.*)/i);
   if (prefixMatch) {
     return prefixMatch[1].trim();
   }
-
   // Try alternate approaches
   // Remove figure references at the beginning
   let shortCaption = caption
     .replace(/^(figure|fig\.?)(\s|\.|:)+\d+(\s|\.|:)+/i, "")
     .trim();
-
   // Remove any leading non-alphanumeric characters after cleaning
   shortCaption = shortCaption.replace(/^[^a-z0-9]+/i, "").trim();
-
   return shortCaption || caption;
 }
-
 // Helper to process image URLs
 function processImageUrl(src, arxivId) {
   if (!src) return "no-image-found";
-
   // Skip base64 encoded images
   if (src.includes("data:image/") || src.includes("base64")) {
     return "no-image-found"; // Return no-image-found for base64 images
   }
-
   if (src.startsWith("http")) {
     return src;
   } else if (src.startsWith("/")) {
@@ -318,7 +274,6 @@ function processImageUrl(src, arxivId) {
     return `https://arxiv.org/html/${arxivId}/${src.replace(/^\.\//, "")}`;
   }
 }
-
 // Helper to add a figure to the array, avoiding duplicates
 function addFigure(figures, figure) {
   // Skip figures with no valid image
@@ -328,16 +283,13 @@ function addFigure(figures, figure) {
     );
     return;
   }
-
   // Check if we already have this figure number
   const existingIndex = figures.findIndex((f) => f.index === figure.index);
-
   if (existingIndex >= 0) {
     // If current figure has no valid image, don't update
     if (figure.content === "no-image-found") {
       return;
     }
-
     // If caption is better (longer or has more info), update it
     if (
       figure.caption &&
@@ -352,7 +304,6 @@ function addFigure(figures, figure) {
     figures.push(figure);
   }
 }
-
 // Process HTML with Gemini API - no artificial delays
 async function processHtmlWithGemini(html, arxivId) {
   console.log(`[GEMINI API] Starting figure extraction for paper ${arxivId}`);
@@ -365,7 +316,6 @@ Extract only figures (not tables) from this scientific paper HTML. For each figu
 1. Figure number
 2. Full caption text
 3. Image source URLs
-
 Format EXACTLY as a JSON array with this structure (follow this EXACTLY):
 [
   {
@@ -377,7 +327,6 @@ Format EXACTLY as a JSON array with this structure (follow this EXACTLY):
     "originalCaption": "Figure 1: This is the full original caption text"
   }
 ]
-
 IMPORTANT INSTRUCTIONS:
 - Only include actual figures with images, NOT tables
 - Only include figures where you can find a valid URL (not base64 encoded images)
@@ -438,7 +387,6 @@ IMPORTANT INSTRUCTIONS:
     console.log(
       `[GEMINI API] Extracted ${extractedFigures.length} figures from JSON response`
     );
-
     // Filter out any figures with base64 images or no-image-found
     const validFigures = extractedFigures.filter((fig) => {
       const content = fig.content || "";
@@ -448,11 +396,9 @@ IMPORTANT INSTRUCTIONS:
         !content.includes("base64")
       );
     });
-
     console.log(
       `[GEMINI API] ${validFigures.length} valid figures after filtering`
     );
-
     // Log end time and duration
     const endTime = new Date();
     const duration = (endTime - startTime) / 1000;
@@ -474,7 +420,6 @@ IMPORTANT INSTRUCTIONS:
     return [];
   }
 }
-
 // Process captions without delays - only used if needed for back-compatibility
 async function summarizeCaptions(figures) {
   console.log(
@@ -505,7 +450,6 @@ async function summarizeCaptions(figures) {
   );
   return processedFigures;
 }
-
 // Fetch paper HTML with realistic browsing behavior
 async function fetchPaper(arxivId, retryCount = 0) {
   console.log(`[NETWORK] Fetching paper HTML for ${arxivId}...`);
@@ -586,7 +530,6 @@ async function fetchPaper(arxivId, retryCount = 0) {
     return null;
   }
 }
-
 // Main process function with human-like behaviors only for arxiv
 async function processAndStorePaper(paper) {
   console.log(`\n[PAPER PROCESSING] ========================================`);
@@ -633,7 +576,6 @@ async function processAndStorePaper(paper) {
       )} seconds)...`
     );
     await delay(analysisTime);
-
     // Extract figures with Cheerio
     console.log(`[PAPER PROCESSING] Starting figure extraction with Cheerio`);
     const extractedFigures = await extractFiguresWithCheerio(
@@ -643,7 +585,6 @@ async function processAndStorePaper(paper) {
     console.log(
       `[PAPER PROCESSING] Extracted ${extractedFigures.length} figures from paper`
     );
-
     // Log details about extracted figures
     extractedFigures.forEach((figure, index) => {
       console.log(`[PAPER PROCESSING] Figure ${index + 1} details:`);
@@ -664,7 +605,6 @@ async function processAndStorePaper(paper) {
         }...`
       );
     });
-
     // Limit to first 10 figures with explanation
     let limitedFigures = extractedFigures;
     if (extractedFigures.length > 10) {
@@ -673,7 +613,6 @@ async function processAndStorePaper(paper) {
       );
       limitedFigures = extractedFigures.slice(0, 10);
     }
-
     // Format for database
     console.log(`[PAPER PROCESSING] Formatting figures for database storage`);
     // Since the figures are already in the correct format, just ensure all fields are present
@@ -688,7 +627,6 @@ async function processAndStorePaper(paper) {
         fig.caption ||
         `Figure ${fig.index || index + 1}`,
     }));
-
     // Simulate final review before saving (human-like delay)
     const reviewTime = getHumanDelay(5000);
     console.log(
@@ -697,7 +635,6 @@ async function processAndStorePaper(paper) {
       )} seconds)...`
     );
     await delay(reviewTime);
-
     // Update database
     console.log(
       `[PAPER PROCESSING] Updating database with ${formattedGraphics.length} figures`
@@ -724,7 +661,6 @@ async function processAndStorePaper(paper) {
         `[PAPER PROCESSING] Stored ${formattedGraphics.length} figures for paper ${paper.id}`
       );
     }
-
     // Log end time and duration
     const endTime = new Date();
     const duration = (endTime - startTime) / 1000;
@@ -767,7 +703,6 @@ async function processAndStorePaper(paper) {
   }
   console.log(`[PAPER PROCESSING] ========================================`);
 }
-
 async function main() {
   console.log("\n[MAIN] ================================================");
   console.log("[MAIN] Starting paper figure extraction with Cheerio");
@@ -799,7 +734,6 @@ async function main() {
       .from("arxivPapersData")
       .select("id", { count: "exact" })
       .is("paperGraphics", null)
-      .gt("totalScore", 0.5)
       .gte("indexedDate", fourDaysAgo.toISOString());
     if (countError) {
       console.error(`[MAIN] Database count query error:`, countError);
@@ -818,7 +752,7 @@ async function main() {
     while (hasMore) {
       // Take breaks between sessions
       if (startIndex > 0) {
-        const sessionBreak = getHumanDelay(300000); // 5-minute average break
+        const sessionBreak = getHumanDelay(30000); // Changed from 300000 (5-minute) to 30000 (30-second) to match paper-tables
         console.log(
           `[MAIN] Taking a break between batches (${Math.round(
             sessionBreak / 1000
@@ -839,12 +773,12 @@ async function main() {
       );
       const { data: papers, error } = await supabase
         .from("arxivPapersData")
-        .select("id, arxivId")
+        .select("id, arxivId, pdfUrl")
         .is("paperGraphics", null)
-        .gt("totalScore", 0.5)
+        .gte("totalScore", 0)
         .gte("indexedDate", fourDaysAgo.toISOString())
         .order("totalScore", { ascending: false })
-        .limit(BATCH_SIZE);
+        .range(startIndex, startIndex + BATCH_SIZE - 1);
       const queryEndTime = new Date();
       const queryDuration = (queryEndTime - queryStartTime) / 1000;
       console.log(
@@ -873,6 +807,9 @@ async function main() {
         console.log(`[MAIN] Paper ${index + 1}/${papers.length} in batch:`);
         console.log(`[MAIN]   - ID: ${paper.id}`);
         console.log(`[MAIN]   - ArXiv ID: ${paper.arxivId}`);
+        console.log(
+          `[MAIN]   - PDF URL: ${paper.pdfUrl || "Using default ArXiv URL"}`
+        );
       });
       // Process each paper in the batch
       for (let i = 0; i < papers.length; i++) {
@@ -917,7 +854,7 @@ async function main() {
           100
         ).toFixed(2)}%)`
       );
-      startIndex += BATCH_SIZE; // This line is no longer needed but kept for counting batches
+      startIndex += BATCH_SIZE;
       batchNumber++;
       // Break if we've processed all papers
       if (totalProcessed >= count) {
@@ -950,6 +887,5 @@ async function main() {
   console.log("[MAIN] Paper figure extraction process complete");
   console.log("[MAIN] ================================================\n");
 }
-
 // Start the script
 main().catch(console.error);
