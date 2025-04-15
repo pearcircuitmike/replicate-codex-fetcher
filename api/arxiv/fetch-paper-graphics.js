@@ -15,7 +15,7 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 console.log("[INIT] Gemini 2.0 Flash model initialized");
 // Human-like behavior constants for arxiv.org only
-const BATCH_SIZE = 200;
+const BATCH_SIZE = 100;
 const BASE_DELAY = 5000; // Base delay between actions
 const VARIANCE_FACTOR = 0.3; // 30% variance in timing
 const MIN_PAGE_VIEW_TIME = 5000; // Minimum time to view a page

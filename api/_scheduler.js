@@ -67,6 +67,7 @@ cron.schedule("05 06 * * *", async () => {
     // New: update Hugging Face score script
     await runScript("api/arxiv/update-huggingFace-score.js");
     await runScript("api/arxiv/generate-summary.js");
+    await runScript("api/arxiv/revalidate-papers.js"); // First revalidation for general summaries
 
     // -----------------------------------------------
     // Insert the three new calls right after generate-summary.js
@@ -76,8 +77,8 @@ cron.schedule("05 06 * * *", async () => {
     await runScript("api/arxiv/generate-summary-ocr.js");
 
     await runScript("api/arxiv/publish-to-devto.js");
-    await runScript("api/arxiv/publish-to-hashnode.js");
-    await runScript("api/arxiv/publish-to-reddit.js");
+    // await runScript("api/arxiv/publish-to-hashnode.js");
+    // await runScript("api/arxiv/publish-to-reddit.js");
     await runScript("api/arxiv/choose-paper-tasks.js");
 
     // -------------------------
@@ -103,7 +104,7 @@ cron.schedule("05 06 * * *", async () => {
     // --------------------------------------------------------
     // Finally, call the revalidation scripts for papers/models
     // --------------------------------------------------------
-    await runScript("api/arxiv/revalidate-papers.js");
+    await runScript("api/arxiv/revalidate-papers.js"); // Second revalidation catches big summaries
     await runScript("api/replicate/revalidate-models.js");
 
     logWithTimestamp("All scheduled scripts completed successfully.");

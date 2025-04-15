@@ -13,7 +13,7 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 // Simplified rate limiter
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const rateLimiter = async () => {
-  await sleep(1); // Ensures 1000 requests per second
+  await sleep(20); // Ensures 50 requests per second
 };
 
 async function updateLoopsContacts() {
