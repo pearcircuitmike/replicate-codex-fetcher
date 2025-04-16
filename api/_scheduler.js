@@ -77,8 +77,8 @@ cron.schedule("05 06 * * *", async () => {
     await runScript("api/arxiv/generate-summary-ocr.js");
 
     await runScript("api/arxiv/publish-to-devto.js");
-    // await runScript("api/arxiv/publish-to-hashnode.js");
-    // await runScript("api/arxiv/publish-to-reddit.js");
+    // await runScript("api/arxiv/publish-to-hashnode.js"); -- Not doing this for now
+    // await runScript("api/arxiv/publish-to-reddit.js"); -- Not doing this for now
     await runScript("api/arxiv/choose-paper-tasks.js");
 
     // -------------------------
