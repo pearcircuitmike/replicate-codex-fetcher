@@ -40,7 +40,8 @@ const ARXIV_API_URL = "http://export.arxiv.org/api/query";
 
 // --- Script Configuration ---
 const BATCH_SIZE = 25; // How many papers to process per batch (adjust based on performance/rate limits)
-const DELAY_BETWEEN_AUTHORS_MS = 750; // Delay between processing each author string for a paper
+const DELAY_BETWEEN_AUTHORS_MS = 1100; // Increased delay for rate limiting (1.1 seconds)
+const DELAY_WITHIN_WORKS_CHECK_MS = 150; // Added delay within works check loop
 const DELAY_BETWEEN_BATCHES_MS = 3000; // Delay between paper batches
 const TARGET_SCHEMA = "public"; // Define the schema name
 
@@ -192,6 +193,12 @@ async function checkOrcidWorksForPaper(orcidId, arxivId, doi, token) {
   let pagesChecked = 0;
   let groupsOnPage = 0;
   do {
+    // Add delay before fetching next page to respect rate limits
+    if (pagesChecked > 0) {
+      // Don't delay before the first fetch
+      await delay(DELAY_WITHIN_WORKS_CHECK_MS);
+    }
+
     const worksUrl = `${ORCID_API_URL}/${orcidId}/works?offset=${offset}&rows=${ORCID_WORKS_PAGE_SIZE}`;
     // console.log(`            Checking works page: ${worksUrl}`); // Verbose logging
     try {
@@ -245,7 +252,7 @@ async function checkOrcidWorksForPaper(orcidId, arxivId, doi, token) {
         }
       }
       offset += groupsOnPage;
-      pagesChecked++;
+      pagesChecked++; // Increment after processing the current page's response
       if (
         pagesChecked >= MAX_WORKS_PAGES_TO_CHECK ||
         (totalWorks > 0 && offset >= totalWorks) ||
@@ -268,7 +275,7 @@ async function checkOrcidWorksForPaper(orcidId, arxivId, doi, token) {
       }
       return false; // Stop checking if an error occurs
     }
-  } while (groupsOnPage === ORCID_WORKS_PAGE_SIZE);
+  } while (groupsOnPage === ORCID_WORKS_PAGE_SIZE); // Continue only if the last page was full
   console.log(
     `         Paper (arXiv:${normalizedTargetArxivId} / DOI:${doi}) not found after checking ${pagesChecked} page(s) of works for ORCID ${orcidId}.`
   );

@@ -45,6 +45,10 @@ const ORCID_TOKEN_URL = "https://orcid.org/oauth/token";
 const ORCID_WORKS_PAGE_SIZE = 100; // Max items per page for works endpoint (adjust if needed)
 const MAX_WORKS_PAGES_TO_CHECK = 10; // Safety limit for pagination
 
+// --- Script Configuration ---
+const DELAY_BETWEEN_AUTHORS_MS = 1100; // Delay between processing each author (for ORCID rate limits)
+const DELAY_WITHIN_WORKS_CHECK_MS = 150; // Delay within works check loop (for ORCID rate limits)
+
 // Configure RSS parser with custom fields
 const rssParser = new Parser({
   customFields: {
@@ -81,6 +85,9 @@ const allowedCategories = [
 ];
 
 // --- Helper Functions ---
+
+// Simple delay function
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function formatDate(date) {
   const day = date.getDate();
@@ -170,7 +177,7 @@ async function getOrcidApiToken() {
   const clientId = process.env.ORCID_CLIENT_ID;
   const clientSecret = process.env.ORCID_CLIENT_SECRET;
   if (!clientId || !clientSecret) return null;
-  console.log("Fetching new ORCID token...");
+  console.log("   Fetching new ORCID token...");
   try {
     const params = new URLSearchParams({
       client_id: clientId,
@@ -190,11 +197,11 @@ async function getOrcidApiToken() {
       throw new Error("Invalid token response from ORCID");
     orcidTokenCache.token = token;
     orcidTokenCache.expiry = now + (expiresIn - 300) * 1000;
-    console.log("New ORCID token obtained and cached");
+    console.log("   New ORCID token obtained and cached");
     return token;
   } catch (error) {
     console.error(
-      `Failed to get ORCID API token: ${error.message}`,
+      `   Failed to get ORCID API token: ${error.message}`,
       error.response?.data ? JSON.stringify(error.response.data) : ""
     );
     orcidTokenCache.token = null;
@@ -268,21 +275,27 @@ async function searchOrcidByName(searchTerm, token) {
 
 /**
  * Checks if a specific paper (by arXiv ID or DOI) exists in an ORCID profile's works.
- * Handles pagination up to a limit.
+ * Handles pagination up to a limit. Includes delay for rate limiting.
  */
 async function checkOrcidWorksForPaper(orcidId, arxivId, doi, token) {
   if (!orcidId || !token || (!arxivId && !doi)) return false;
+  const normalizedTargetArxivId = normalizeArxivId(arxivId);
   console.log(
-    `   Checking ALL ORCID works for ${orcidId} for paper arXiv:${arxivId} / DOI:${doi}`
+    `   Checking ALL ORCID works for ${orcidId} for paper arXiv:${normalizedTargetArxivId} / DOI:${doi}`
   );
 
-  const normalizedTargetArxivId = normalizeArxivId(arxivId);
   let offset = 0;
   let totalWorks = 0;
   let pagesChecked = 0;
   let groupsOnPage = 0;
 
   do {
+    // Add delay before fetching next page to respect rate limits
+    if (pagesChecked > 0) {
+      // Don't delay before the first fetch
+      await delay(DELAY_WITHIN_WORKS_CHECK_MS);
+    }
+
     const worksUrl = `${ORCID_API_URL}/${orcidId}/works?offset=${offset}&rows=${ORCID_WORKS_PAGE_SIZE}`;
     console.log(`      Checking works page: ${worksUrl}`);
     try {
@@ -342,7 +355,7 @@ async function checkOrcidWorksForPaper(orcidId, arxivId, doi, token) {
       }
 
       offset += groupsOnPage;
-      pagesChecked++;
+      pagesChecked++; // Increment after processing the current page's response
 
       if (
         pagesChecked >= MAX_WORKS_PAGES_TO_CHECK ||
@@ -366,12 +379,12 @@ async function checkOrcidWorksForPaper(orcidId, arxivId, doi, token) {
           error.response?.status ? `Status: ${error.response.status}` : ""
         );
       }
-      return false;
+      return false; // Stop checking if an error occurs
     }
-  } while (groupsOnPage === ORCID_WORKS_PAGE_SIZE);
+  } while (groupsOnPage === ORCID_WORKS_PAGE_SIZE); // Continue only if the last page was full
 
   console.log(
-    `   Paper (arXiv:${arxivId} / DOI:${doi}) not found after checking ${pagesChecked} page(s) of works for ORCID ${orcidId}.`
+    `   Paper (arXiv:${normalizedTargetArxivId} / DOI:${doi}) not found after checking ${pagesChecked} page(s) of works for ORCID ${orcidId}.`
   );
   return false;
 }
@@ -535,6 +548,8 @@ async function resolveAuthor(
   arxivId = null,
   doi = null
 ) {
+  // This function is identical to the one in enrich-arxiv-authors.js
+  // It now includes the stricter search logic and high-confidence check.
   let authorRecord = null;
   let resolved_orcid_id = orcid_from_source; // Use ORCID from Crossref if available
   let verification_status = "UNVERIFIED";
@@ -607,7 +622,7 @@ async function resolveAuthor(
       const orcidToken = await getOrcidApiToken();
       let orcidSearchResult = null;
       if (orcidToken) {
-        orcidSearchResult = await searchOrcidByName(sanitized_name, orcidToken); // Uses stricter search
+        orcidSearchResult = await searchOrcidByName(sanitized_name, orcidToken); // Uses stricter search now
       }
 
       // --- MODIFIED: Only proceed if high confidence ---
@@ -882,8 +897,8 @@ async function checkAndInsertPaperIfNew(item, allCategories, pubDate) {
     }
 
     let crossrefAuthors = [];
-    // Use the DOI we determined for the paper (from RSS or potentially API)
-    const effectiveDoi = doi; // In fetcher, DOI comes from RSS or Crossref lookup below
+    // Use the DOI we determined for the paper (from RSS)
+    const effectiveDoi = doi;
 
     if (effectiveDoi) {
       console.log(`Fetching Crossref for DOI: ${effectiveDoi}`);
@@ -1009,6 +1024,9 @@ async function checkAndInsertPaperIfNew(item, allCategories, pubDate) {
           `      Could not resolve/create author record for "${original_name_string}" on paper ${arxivId}`
         );
       }
+
+      // Add delay between processing authors for rate limiting
+      await delay(DELAY_BETWEEN_AUTHORS_MS);
     } // End author loop
   } catch (error) {
     console.error(
