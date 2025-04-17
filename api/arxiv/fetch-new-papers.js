@@ -4,15 +4,16 @@ import * as dotenv from "dotenv";
 import axios from "axios";
 import Parser from "rss-parser";
 import slugify from "slugify";
-import { fileURLToPath } from "url";
-import { dirname } from "path";
+// Removed unused url/path imports unless needed elsewhere (dotenv default path is usually sufficient)
+// import { fileURLToPath } from "url";
+// import { dirname } from "path";
 
 // Set up explicit execution logging
-console.log("Script starting...");
+console.log("Script starting: fetch-new-papers.js");
 
-// Setup proper paths for ES modules
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+// Removed unused __filename/__dirname definitions
+// const __filename = fileURLToPath(import.meta.url);
+// const __dirname = dirname(__filename);
 
 // Load environment variables
 dotenv.config();
@@ -89,7 +90,12 @@ function formatDate(date) {
 }
 
 function sanitizeValue(value) {
-  return typeof value === "string" ? value.replace(/\\|\"/g, "").trim() : "";
+  // Match sanitization used in backfill script
+  if (typeof value === "string") {
+    // eslint-disable-next-line no-control-regex
+    return value.replace(/[\x00-\x1F\x7F-\x9F\\]|"/g, "").trim();
+  }
+  return value;
 }
 
 function extractArxivId(url) {
@@ -197,16 +203,26 @@ async function getOrcidApiToken() {
   }
 }
 
+// Updated searchOrcidByName to be stricter
 async function searchOrcidByName(searchTerm, token) {
   if (!searchTerm || !token) return null;
-  const nameParts = searchTerm.split(" ");
+  const nameParts = searchTerm.trim().split(/\s+/);
   const familyName = nameParts.pop() || "";
   const givenNames = nameParts.join(" ");
-  let query = `family-name:${familyName}`;
-  if (givenNames)
-    query += ` AND (given-names:"${givenNames}" OR given-names:${givenNames.charAt(
-      0
-    )}*)`;
+
+  // --- MODIFIED QUERY ---
+  // Only search by family name and exact full given name (if available)
+  let query = `family-name:"${familyName}"`; // Use quotes for potentially better matching
+  if (givenNames) {
+    query += ` AND given-names:"${givenNames}"`;
+  } else {
+    console.log(
+      `      WARN: Only one name part found ('${familyName}'). Searching by family name only.`
+    );
+  }
+  // --- END MODIFIED QUERY ---
+
+  console.log(`      Searching ORCID with STRICT query: ${query}`);
   try {
     const response = await axios.get(`${ORCID_API_URL}/search`, {
       headers: { Accept: "application/json", Authorization: `Bearer ${token}` },
@@ -215,25 +231,35 @@ async function searchOrcidByName(searchTerm, token) {
     });
     const results = response.data?.result || [];
     const numFound = response.data?.["num-found"] || 0;
-    if (numFound === 0 || !results[0]) return null;
+    if (numFound === 0 || !results[0]) {
+      console.log(
+        `      ORCID strict search found no results for query: ${query}`
+      );
+      return null;
+    }
     const topResult = results[0];
     const orcidId = topResult["orcid-identifier"]?.path;
     if (!orcidId) {
       console.warn(
-        "ORCID search result missing orcid-identifier path:",
+        "      ORCID search result missing orcid-identifier path:",
         topResult
       );
       return null;
     }
-    const isHighConfidence = numFound === 1; // Simple confidence based on uniqueness
+    // isHighConfidence is true only if exactly one result is found
+    const isHighConfidence = numFound === 1;
+    console.log(
+      `      ORCID strict search found ${numFound} result(s). Top result: ${orcidId} (HighConf: ${isHighConfidence})`
+    );
+    // Return confidence flag along with the top result's ORCID
     return { orcid: orcidId, name: null, isHighConfidence: isHighConfidence };
   } catch (error) {
     if (error.response && error.response.status === 404) {
-      console.log(`ORCID search returned 404 for query: ${query}`);
+      console.log(`      ORCID strict search returned 404 for query: ${query}`);
       return null;
     }
     console.error(
-      `Failed to search ORCID by name (${searchTerm}): ${error.message}`,
+      `      Failed to search ORCID by name (strict) (${searchTerm}): ${error.message}`,
       error.response?.status ? `Status: ${error.response.status}` : ""
     );
     return null;
@@ -320,11 +346,13 @@ async function checkOrcidWorksForPaper(orcidId, arxivId, doi, token) {
 
       if (
         pagesChecked >= MAX_WORKS_PAGES_TO_CHECK ||
-        offset >= totalWorks ||
+        (totalWorks > 0 && offset >= totalWorks) || // Added check against totalWorks
         groupsOnPage < ORCID_WORKS_PAGE_SIZE
       ) {
         console.log(
-          `      Stopping works check: Pages checked=${pagesChecked}, Processed approx=${offset}/${totalWorks}, Last page size=${groupsOnPage}`
+          `      Stopping works check: Pages checked=${pagesChecked}, Processed approx=${offset}/${
+            totalWorks || "unknown"
+          }, Last page size=${groupsOnPage}`
         );
         break;
       }
@@ -353,13 +381,19 @@ async function checkOrcidWorksForPaper(orcidId, arxivId, doi, token) {
  * Conditionally stores emails based on NODE_ENV.
  */
 async function triggerOrcidEnrichment(authorId, orcidId) {
+  if (!authorId || !orcidId) {
+    console.warn(
+      "   Skipping enrichment trigger: Missing authorId or orcidId."
+    );
+    return;
+  }
   console.log(
-    `Attempting enrichment for author ${authorId} with ORCID ${orcidId}`
+    `   Attempting ORCID enrichment trigger for author ${authorId} with ORCID ${orcidId}`
   );
   try {
     const token = await getOrcidApiToken();
     if (!token) {
-      console.warn(`Skipping enrichment for ${authorId}: No ORCID token.`);
+      console.warn(`   Skipping enrichment for ${authorId}: No ORCID token.`);
       return;
     }
     const response = await axios.get(`${ORCID_API_URL}/${orcidId}/person`, {
@@ -367,7 +401,11 @@ async function triggerOrcidEnrichment(authorId, orcidId) {
       timeout: 15000,
     });
     const personData = response.data;
-    let updateData = { last_orcid_sync: new Date().toISOString() };
+    // Ensure orcid_id is included in update, especially if enriching an existing record
+    let updateData = {
+      last_orcid_sync: new Date().toISOString(),
+      orcid_id: orcidId,
+    };
 
     // Canonical Name
     if (personData.name?.["family-name"]?.value)
@@ -391,33 +429,29 @@ async function triggerOrcidEnrichment(authorId, orcidId) {
         .map((name) => name.content)
         .filter(Boolean);
 
-    // Researcher URLs (Corrected Parsing)
+    // Researcher URLs
     let parsedUrls = [];
     if (personData["researcher-urls"]?.["researcher-url"]?.length > 0) {
-      console.log(
-        `   Parsing URLs from 'researcher-urls' structure for ${orcidId}`
-      );
+      // console.log(`   Parsing URLs from 'researcher-urls' structure for ${orcidId}`); // Less verbose
       parsedUrls = personData["researcher-urls"]["researcher-url"]
         .map((item) => ({ name: item["url-name"], url: item.url?.value })) // Correct keys
         .filter((u) => u.url && u.name);
     }
     if (parsedUrls.length > 0) {
       updateData.researcher_urls = parsedUrls;
-      console.log(
-        `   Found and parsed ${parsedUrls.length} researcher URLs for ${orcidId}`
-      );
+      // console.log(`   Found and parsed ${parsedUrls.length} researcher URLs for ${orcidId}`); // Less verbose
     } else {
-      console.log(`   No researcher URLs found or parsed for ${orcidId}`);
+      // console.log(`   No researcher URLs found or parsed for ${orcidId}`); // Less verbose
     }
 
-    // *** CORRECTED CONDITIONAL EMAIL STORAGE ***
+    // Conditional Email Storage
     const hasRealEmails = personData.emails?.email?.length > 0; // Check if real emails exist
 
     if (process.env.NODE_ENV === "production") {
       // Production: Store real emails only if they exist
       if (hasRealEmails) {
         console.log(
-          `   Storing ${personData.emails.email.length} real emails for author ${authorId} in production.`
+          `      Storing ${personData.emails.email.length} real emails for author ${authorId} in production.`
         );
         updateData.emails = personData.emails.email
           .map((email) => ({
@@ -429,7 +463,7 @@ async function triggerOrcidEnrichment(authorId, orcidId) {
           .filter((e) => e.email);
       } else {
         console.log(
-          `   No real emails found for author ${authorId} in production. 'emails' field not updated.`
+          `      No real emails found for author ${authorId} in production. 'emails' field not updated.`
         );
       }
     } else {
@@ -437,7 +471,7 @@ async function triggerOrcidEnrichment(authorId, orcidId) {
       if (hasRealEmails) {
         const devEmail = "msyoung2012@gmail.com";
         console.log(
-          `   Real emails found for author ${authorId}, storing hardcoded dev email (${devEmail}) instead (NODE_ENV: ${process.env.NODE_ENV})`
+          `      Real emails found for author ${authorId}, storing hardcoded dev email (${devEmail}) instead (NODE_ENV: ${process.env.NODE_ENV})`
         );
         updateData.emails = [
           {
@@ -450,11 +484,10 @@ async function triggerOrcidEnrichment(authorId, orcidId) {
       } else {
         // No real emails found, so don't store the dev email either
         console.log(
-          `   No real emails found for author ${authorId}, skipping dev email storage (NODE_ENV: ${process.env.NODE_ENV}). 'emails' field not updated.`
+          `      No real emails found for author ${authorId}, skipping dev email storage (NODE_ENV: ${process.env.NODE_ENV}). 'emails' field not updated.`
         );
       }
     }
-    // *** END CORRECTED CONDITIONAL EMAIL STORAGE ***
 
     // Update the author record
     const { error } = await supabase
@@ -463,22 +496,22 @@ async function triggerOrcidEnrichment(authorId, orcidId) {
       .eq("id", authorId);
     if (error)
       console.error(
-        `Failed to update author ${authorId} (ORCID ${orcidId}) with enrichment data:`,
+        `   Failed to update author ${authorId} (ORCID ${orcidId}) with enrichment data:`,
         error
       );
     else
       console.log(
-        `Successfully enriched author ${authorId} (ORCID ${orcidId})`
+        `   Successfully enriched author ${authorId} (ORCID ${orcidId})`
       );
   } catch (error) {
     if (error.response && error.response.status === 404) {
       console.warn(
-        `ORCID ID ${orcidId} (for author ${authorId}) returned 404 during enrichment. Cannot enrich.`
+        `   ORCID ID ${orcidId} (for author ${authorId}) returned 404 during enrichment. Cannot enrich.`
       );
       return;
     }
     console.error(
-      `Error during ORCID enrichment for author ${authorId} (ORCID ${orcidId}): ${error.message}`,
+      `   Error during ORCID enrichment for author ${authorId} (ORCID ${orcidId}): ${error.message}`,
       error.response?.status ? `Status: ${error.response.status}` : ""
     );
   }
@@ -486,7 +519,14 @@ async function triggerOrcidEnrichment(authorId, orcidId) {
 
 /**
  * Resolve author: Find existing or create new author record based on available info.
- * Uses works check to set confidence, but links ORCID if found via search.
+ * Uses stricter ORCID search and only proceeds with high-confidence results.
+ * Calls enrichment whenever an ORCID is associated.
+ * @param {string} original_name_string - The name string from the paper's author list.
+ * @param {string|null} orcid_from_source - ORCID ID found via Crossref (if any).
+ * @param {'FROM_CROSSREF'|'SEARCH_ORCID'} source_type - How the ORCID was (or wasn't) found.
+ * @param {string|null} arxivId - The arXiv ID of the paper for works check.
+ * @param {string|null} doi - The DOI of the paper for works check.
+ * @returns {Promise<{author_id: string, verification_status: string}|null>} Object with author_id and verification_status, or null on failure.
  */
 async function resolveAuthor(
   original_name_string,
@@ -496,185 +536,231 @@ async function resolveAuthor(
   doi = null
 ) {
   let authorRecord = null;
+  let resolved_orcid_id = orcid_from_source; // Use ORCID from Crossref if available
   let verification_status = "UNVERIFIED";
+  let author_id = null;
 
   if (!original_name_string) {
     console.error("Attempted to resolve author with empty name string.");
     return null;
   }
+  const sanitized_name = sanitizeValue(original_name_string);
+  if (!sanitized_name) {
+    console.error(
+      `      Author name "${original_name_string}" became empty after sanitization.`
+    );
+    return null;
+  }
+
+  console.log(
+    `   Resolving author: "${sanitized_name}" (Source Type: ${source_type}, Crossref ORCID: ${
+      orcid_from_source || "N/A"
+    })`
+  );
 
   try {
-    // --- Stage 1: Check provided ORCID (from Crossref) ---
-    if (orcid_from_source && source_type === "FROM_CROSSREF") {
-      const { data, error } = await supabase
+    // --- Stage 1: Check provided ORCID (if from Crossref) ---
+    if (resolved_orcid_id && source_type === "FROM_CROSSREF") {
+      verification_status = "FROM_CROSSREF";
+      const { data: existingAuthor, error: findError } = await supabase
         .from("authors")
         .select("id")
-        .eq("orcid_id", orcid_from_source)
+        .eq("orcid_id", resolved_orcid_id)
         .maybeSingle();
-      if (error)
+
+      if (findError)
         throw new Error(
-          `DB error finding author by ORCID ${orcid_from_source}: ${error.message}`
+          `DB error finding author by ORCID ${resolved_orcid_id}: ${findError.message}`
         );
-      if (data) {
-        authorRecord = { id: data.id };
-        verification_status = "FROM_CROSSREF";
+
+      if (existingAuthor) {
+        author_id = existingAuthor.id;
         console.log(
-          `   Resolved author "${original_name_string}" to existing ORCID ${orcid_from_source} (Author ID: ${data.id}, Status: FROM_CROSSREF)`
+          `      Found existing author ${author_id} via Crossref ORCID ${resolved_orcid_id}. Status: ${verification_status}`
         );
-        triggerOrcidEnrichment(data.id, orcid_from_source);
+        await triggerOrcidEnrichment(author_id, resolved_orcid_id); // Enrich existing
       } else {
+        console.log(
+          `      Inserting new author with Crossref ORCID ${resolved_orcid_id} for name "${sanitized_name}"...`
+        );
         const { data: insertedAuthor, error: insertError } = await supabase
           .from("authors")
           .insert({
-            orcid_id: orcid_from_source,
-            canonical_name: original_name_string,
+            orcid_id: resolved_orcid_id,
+            canonical_name: sanitized_name,
           })
           .select("id")
           .single();
         if (insertError)
           throw new Error(
-            `DB error inserting new author for ORCID ${orcid_from_source}: ${insertError.message}`
+            `DB error inserting new author for ORCID ${resolved_orcid_id}: ${insertError.message}`
           );
-        authorRecord = { id: insertedAuthor.id };
-        verification_status = "FROM_CROSSREF";
+        author_id = insertedAuthor.id;
         console.log(
-          `   Inserted new author for "${original_name_string}" with ORCID ${orcid_from_source} (Author ID: ${insertedAuthor.id}, Status: FROM_CROSSREF)`
+          `      Inserted new author ${author_id}. Status: ${verification_status}`
         );
-        triggerOrcidEnrichment(insertedAuthor.id, orcid_from_source);
+        await triggerOrcidEnrichment(author_id, resolved_orcid_id); // Enrich new
       }
     }
-    // --- Stage 2: Fallback to ORCID Search (if no Crossref ORCID) ---
+    // --- Stage 2: Search ORCID by name (if no Crossref ORCID) ---
     else if (source_type === "SEARCH_ORCID") {
       const orcidToken = await getOrcidApiToken();
       let orcidSearchResult = null;
-      if (orcidToken)
-        orcidSearchResult = await searchOrcidByName(
-          original_name_string,
-          orcidToken
-        );
+      if (orcidToken) {
+        orcidSearchResult = await searchOrcidByName(sanitized_name, orcidToken); // Uses stricter search
+      }
 
-      if (orcidSearchResult?.orcid) {
-        // Found potential ORCID via search
+      // --- MODIFIED: Only proceed if high confidence ---
+      if (orcidSearchResult?.orcid && orcidSearchResult.isHighConfidence) {
         console.log(
-          `   ORCID Search found potential match: ${orcidSearchResult.orcid} for "${original_name_string}" (HighConf: ${orcidSearchResult.isHighConfidence})`
+          `      ORCID Search found high-confidence match: ${orcidSearchResult.orcid} for "${sanitized_name}"`
         );
-        let paperFoundOnProfile = false;
-        if (orcidToken)
+        const potential_orcid = orcidSearchResult.orcid;
+
+        // Check if this ORCID is already assigned to ANY author
+        const { data: existingAuthorWithOrcid, error: checkError } =
+          await supabase
+            .from("authors")
+            .select("id, canonical_name")
+            .eq("orcid_id", potential_orcid)
+            .maybeSingle();
+
+        if (checkError)
+          throw new Error(
+            `DB error checking for existing ORCID ${potential_orcid}: ${checkError.message}`
+          );
+
+        let paperFoundOnProfile = false; // Check works regardless of existing/new author
+        if (orcidToken) {
           paperFoundOnProfile = await checkOrcidWorksForPaper(
-            orcidSearchResult.orcid,
+            potential_orcid,
             arxivId,
             doi,
             orcidToken
           );
-
-        // Set status based on works check
-        if (paperFoundOnProfile) {
-          verification_status = "ORCID_MATCH_CONFIRMED";
-          console.log(
-            `   [✓] Paper FOUND on ORCID profile ${orcidSearchResult.orcid}. Status set to: ${verification_status}`
-          );
-        } else {
-          verification_status = "ORCID_MATCH_POTENTIAL"; // Still link, but mark as potential
-          console.log(
-            `   [?] Paper NOT found on ORCID profile ${orcidSearchResult.orcid}. Status set to: ${verification_status}`
-          );
         }
+        // Set status based on works check for the link
+        verification_status = paperFoundOnProfile
+          ? "ORCID_MATCH_CONFIRMED"
+          : "ORCID_MATCH_POTENTIAL";
 
-        // Find or Insert Author record (ALWAYS do this now if orcidSearchResult exists)
-        const { data: existingAuthor, error: findError } = await supabase
-          .from("authors")
-          .select("id")
-          .eq("orcid_id", orcidSearchResult.orcid)
-          .maybeSingle();
-        if (findError)
-          throw new Error(
-            `DB error finding author by searched ORCID ${orcidSearchResult.orcid}: ${findError.message}`
-          );
-
-        if (existingAuthor) {
-          authorRecord = { id: existingAuthor.id };
+        if (existingAuthorWithOrcid) {
+          // High-confidence ORCID matches an existing author record
+          author_id = existingAuthorWithOrcid.id;
+          resolved_orcid_id = potential_orcid;
           console.log(
-            `   Resolved author "${original_name_string}" to existing ORCID ${orcidSearchResult.orcid} via SEARCH (Author ID: ${existingAuthor.id}, Final Status: ${verification_status})`
+            `         Found existing author ${author_id} ("${existingAuthorWithOrcid.canonical_name}") via high-confidence search. Final Status: ${verification_status}`
           );
-          triggerOrcidEnrichment(existingAuthor.id, orcidSearchResult.orcid);
+          await triggerOrcidEnrichment(author_id, resolved_orcid_id); // Enrich existing
         } else {
+          // High-confidence ORCID is new. Create a new author.
+          resolved_orcid_id = potential_orcid;
+          console.log(
+            `         High-confidence ORCID ${resolved_orcid_id} is new. Final Status: ${verification_status}`
+          );
+          console.log(
+            `         Inserting new author with high-confidence searched ORCID ${resolved_orcid_id} for name "${sanitized_name}"...`
+          );
           const { data: insertedAuthor, error: insertError } = await supabase
             .from("authors")
             .insert({
-              orcid_id: orcidSearchResult.orcid,
-              canonical_name: original_name_string,
+              orcid_id: resolved_orcid_id,
+              canonical_name: sanitized_name,
             })
             .select("id")
             .single();
           if (insertError)
             throw new Error(
-              `DB error inserting new author for searched ORCID ${orcidSearchResult.orcid}: ${insertError.message}`
+              `DB error inserting new author for searched ORCID ${resolved_orcid_id}: ${insertError.message}`
             );
-          authorRecord = { id: insertedAuthor.id };
-          console.log(
-            `   Inserted new author for "${original_name_string}" with ORCID ${orcidSearchResult.orcid} via SEARCH (Author ID: ${insertedAuthor.id}, Final Status: ${verification_status})`
-          );
-          triggerOrcidEnrichment(insertedAuthor.id, orcidSearchResult.orcid);
+          author_id = insertedAuthor.id;
+          console.log(`         Inserted new author ${author_id}.`);
+          await triggerOrcidEnrichment(author_id, resolved_orcid_id); // Enrich new
         }
-      }
-      // --- Stage 3: Create/Find Placeholder (only if ORCID search yielded nothing) ---
-      if (!authorRecord) {
+      } else if (
+        orcidSearchResult?.orcid &&
+        !orcidSearchResult.isHighConfidence
+      ) {
+        // Low confidence result - log and skip ORCID association
         console.log(
-          `   [!] No ORCID found for "${original_name_string}" via Crossref or Search. Checking/creating placeholder (orcid_id = NULL).`
+          `      ORCID Search found match ${orcidSearchResult.orcid} but confidence is low (multiple results). Skipping ORCID association.`
         );
+        resolved_orcid_id = null;
+        // author_id remains null, will proceed to placeholder check
+      } else {
+        // No search results
+        console.log(`      No ORCID found via search for "${sanitized_name}".`);
+        resolved_orcid_id = null;
+        // author_id remains null, will proceed to placeholder check
+      }
+
+      // --- Stage 3: No ORCID found OR low confidence search ---
+      if (!author_id) {
+        console.log(
+          `      No high-confidence ORCID associated. Checking/creating placeholder author...`
+        );
+        resolved_orcid_id = null; // Ensure no ORCID
+        verification_status = "UNVERIFIED";
+
         const { data: placeholder, error: findError } = await supabase
           .from("authors")
           .select("id")
           .is("orcid_id", null)
-          .eq("canonical_name", original_name_string)
+          .eq("canonical_name", sanitized_name)
           .maybeSingle();
+
         if (findError)
           throw new Error(
-            `DB error finding placeholder author for name "${original_name_string}": ${findError.message}`
+            `DB error finding placeholder author for name "${sanitized_name}": ${findError.message}`
           );
+
         if (placeholder) {
-          authorRecord = { id: placeholder.id };
-          verification_status = "UNVERIFIED";
+          author_id = placeholder.id;
           console.log(
-            `   [+] Found existing placeholder author record ${authorRecord.id} for "${original_name_string}" (Status: UNVERIFIED)`
+            `         Found existing placeholder author ${author_id} for "${sanitized_name}". Status: ${verification_status}`
           );
         } else {
           console.log(
-            `   [*] Creating NEW placeholder author record for "${original_name_string}" (orcid_id = NULL)...`
+            `         Creating NEW placeholder author record for "${sanitized_name}"...`
           );
           const { data: insertedPlaceholder, error: insertError } =
             await supabase
               .from("authors")
-              .insert({ orcid_id: null, canonical_name: original_name_string })
+              .insert({ orcid_id: null, canonical_name: sanitized_name })
               .select("id")
               .single();
           if (insertError)
             throw new Error(
-              `DB error inserting placeholder author for name "${original_name_string}": ${insertError.message}`
+              `DB error inserting placeholder author for name "${sanitized_name}": ${insertError.message}`
             );
-          authorRecord = { id: insertedPlaceholder.id };
-          verification_status = "UNVERIFIED";
+          author_id = insertedPlaceholder.id;
           console.log(
-            `   [+] Created new placeholder author record ${authorRecord.id} for "${original_name_string}" (Status: UNVERIFIED)`
+            `         Created new placeholder author ${author_id}. Status: ${verification_status}`
           );
+          // Do NOT call triggerOrcidEnrichment for placeholders
         }
       } // End placeholder logic
     } else {
       console.error(
-        `Invalid source_type "${source_type}" in resolveAuthor for "${original_name_string}"`
+        `Invalid source_type "${source_type}" in resolveAuthor for "${sanitized_name}"`
       );
       return null;
     }
 
-    if (!authorRecord) {
+    // Final check for author_id
+    if (!author_id) {
       console.error(
-        `   Failed to resolve or create any author record for "${original_name_string}"`
+        `   Failed to resolve or create any author record for "${sanitized_name}"`
       );
       return null;
     }
+
+    // Return only author_id and verification_status needed for linking
+    // ORCID enrichment is handled internally now
     return {
-      author_id: authorRecord.id,
+      author_id: author_id,
       verification_status: verification_status,
+      // orcid_id: resolved_orcid_id // No longer needed by caller
     };
   } catch (error) {
     console.error(
@@ -743,6 +829,7 @@ async function checkAndInsertPaperIfNew(item, allCategories, pubDate) {
     }
 
     const original_authors_str = sanitizeValue(item.creator);
+    // Use sanitized DOI from RSS item directly
     const doi = sanitizeValue(item.doi || item["arxiv:doi"]);
     const abstractText = sanitizeValue(
       item.contentSnippet || item.summary || item.description || ""
@@ -752,6 +839,7 @@ async function checkAndInsertPaperIfNew(item, allCategories, pubDate) {
     const publishedDate = new Date(item.pubDate || pubDate).toISOString();
     const lastUpdated = new Date().toISOString();
 
+    // --- Insert Paper ---
     const { data: insertedPaper, error: insertError } = await supabase
       .from("arxivPapersData")
       .insert([
@@ -767,7 +855,7 @@ async function checkAndInsertPaperIfNew(item, allCategories, pubDate) {
           arxivId: arxivId,
           slug: slug,
           platform: "arxiv",
-          doi: doi,
+          doi: doi, // Insert DOI found from RSS/API
         },
       ])
       .select("id")
@@ -784,6 +872,7 @@ async function checkAndInsertPaperIfNew(item, allCategories, pubDate) {
       `Inserted new paper "${title}" (ID: ${arxivId}) with DB ID ${paper_id}`
     );
 
+    // --- Process Authors ---
     const original_authors_list = original_authors_str
       ? original_authors_str.split(/,\s*(?![jJ]r\.|[IVXLCDM]+$)/g)
       : [];
@@ -793,11 +882,14 @@ async function checkAndInsertPaperIfNew(item, allCategories, pubDate) {
     }
 
     let crossrefAuthors = [];
-    if (doi) {
-      console.log(`Fetching Crossref for DOI: ${doi}`);
+    // Use the DOI we determined for the paper (from RSS or potentially API)
+    const effectiveDoi = doi; // In fetcher, DOI comes from RSS or Crossref lookup below
+
+    if (effectiveDoi) {
+      console.log(`Fetching Crossref for DOI: ${effectiveDoi}`);
       try {
         const crossrefUrl = `https://api.crossref.org/works/${encodeURIComponent(
-          doi
+          effectiveDoi
         )}`;
         const response = await axios.get(crossrefUrl, {
           timeout: 15000,
@@ -805,73 +897,88 @@ async function checkAndInsertPaperIfNew(item, allCategories, pubDate) {
         });
         crossrefAuthors = response.data?.message?.author || [];
         console.log(
-          `Found ${crossrefAuthors.length} authors in Crossref for DOI ${doi}`
+          `Found ${crossrefAuthors.length} authors in Crossref for DOI ${effectiveDoi}`
         );
       } catch (err) {
         if (err.response && err.response.status === 404)
-          console.log(`Crossref returned 404 for DOI ${doi}.`);
+          console.log(`Crossref returned 404 for DOI ${effectiveDoi}.`);
         else
           console.warn(
-            `Failed to fetch/parse Crossref for DOI ${doi}: ${err.message}`
+            `Failed to fetch/parse Crossref for DOI ${effectiveDoi}: ${err.message}`
           );
       }
     } else {
       console.log(`No DOI found for paper ${arxivId}, skipping Crossref.`);
     }
 
+    // Loop through authors from the original string
     for (let i = 0; i < original_authors_list.length; i++) {
       const original_name_string = sanitizeValue(original_authors_list[i]);
       const author_order = i + 1;
       if (!original_name_string) continue;
-      console.log(
-        ` -> Processing author ${author_order}/${original_authors_list.length}: "${original_name_string}"`
-      );
-      let resolvedAuthorData = null;
-      let foundOrcidInCrossref = false;
 
+      console.log(
+        ` -> Processing Author ${author_order}/${original_authors_list.length}: "${original_name_string}"`
+      );
+
+      let resolvedAuthorData = null;
+      let crossrefOrcidMatch = null;
+
+      // Try matching with Crossref authors first if available
       if (crossrefAuthors.length > 0) {
         const normalizedOriginalName = original_name_string.toLowerCase();
-        const originalFamilyNameMatch = normalizedOriginalName.split(" ").pop();
+        const nameParts = original_name_string.split(/\s+/);
+        const originalFamilyName = nameParts.pop() || "";
+        const originalGivenInitial = nameParts[0]
+          ? nameParts[0].charAt(0).toLowerCase()
+          : "";
+
         const crossrefMatch = crossrefAuthors.find((ca) => {
-          const cg = (ca.given || "").toLowerCase();
           const cf = (ca.family || "").toLowerCase();
+          const cg = (ca.given || "").toLowerCase();
           const cfn = `${cg} ${cf}`.trim();
+          if (ca.ORCID && cf === originalFamilyName.toLowerCase()) return true;
           return (
             cfn === normalizedOriginalName ||
-            (cf &&
-              originalFamilyNameMatch &&
-              cf.includes(originalFamilyNameMatch)) ||
-            (cf && normalizedOriginalName.includes(cf))
+            (cf === originalFamilyName.toLowerCase() &&
+              cg.startsWith(originalGivenInitial))
           );
         });
+
         if (crossrefMatch?.ORCID) {
           const orcidUrl = crossrefMatch.ORCID;
           const orcidIdMatch = orcidUrl.match(
             /(\d{4}-\d{4}-\d{4}-\d{3}[0-9X])$/
           );
           if (orcidIdMatch) {
-            const orcid_id = orcidIdMatch[1];
-            console.log(`   Found ORCID ${orcid_id} via Crossref match.`);
-            resolvedAuthorData = await resolveAuthor(
-              original_name_string,
-              orcid_id,
-              "FROM_CROSSREF",
-              arxivId,
-              doi
+            crossrefOrcidMatch = orcidIdMatch[1];
+            console.log(
+              `      Found potential ORCID ${crossrefOrcidMatch} via Crossref match.`
             );
-            foundOrcidInCrossref = true;
           }
         }
       }
-      if (!foundOrcidInCrossref)
+
+      // Resolve author: Use Crossref ORCID if found, otherwise search (stricter search + high-confidence check now)
+      if (crossrefOrcidMatch) {
+        resolvedAuthorData = await resolveAuthor(
+          original_name_string,
+          crossrefOrcidMatch,
+          "FROM_CROSSREF",
+          arxivId,
+          effectiveDoi // Pass effective DOI
+        );
+      } else {
         resolvedAuthorData = await resolveAuthor(
           original_name_string,
           null,
           "SEARCH_ORCID",
           arxivId,
-          doi
+          effectiveDoi // Pass effective DOI
         );
+      }
 
+      // Link author if resolved successfully
       if (resolvedAuthorData?.author_id) {
         const { error: linkError } = await supabase
           .from("paperAuthors")
@@ -879,29 +986,30 @@ async function checkAndInsertPaperIfNew(item, allCategories, pubDate) {
             paper_id: paper_id,
             author_id: resolvedAuthorData.author_id,
             author_order: author_order,
-            original_name_string: original_name_string,
+            original_name_string: original_name_string, // Store original unsanitized? Or sanitized? Using original from list here.
             verification_status: resolvedAuthorData.verification_status,
           });
         if (linkError) {
           if (linkError.code === "23505")
             console.warn(
-              `   Attempted to link duplicate author ${resolvedAuthorData.author_id} to paper ${paper_id}. Skipping.`
+              `      Attempted to link duplicate author ${resolvedAuthorData.author_id} to paper ${paper_id}. Skipping.`
             );
           else
             console.error(
-              `   DB error linking author ${resolvedAuthorData.author_id} to paper ${paper_id}:`,
+              `      DB error linking author ${resolvedAuthorData.author_id} to paper ${paper_id}:`,
               linkError
             );
         } else
           console.log(
-            `   Linked author ${resolvedAuthorData.author_id} to paper ${paper_id} with status ${resolvedAuthorData.verification_status}`
+            `      Linked author ${resolvedAuthorData.author_id} to paper ${paper_id} with status ${resolvedAuthorData.verification_status}`
           );
+        // Enrichment is now handled *inside* resolveAuthor
       } else {
         console.error(
-          `   Could not resolve/create author record for "${original_name_string}" on paper ${arxivId}`
+          `      Could not resolve/create author record for "${original_name_string}" on paper ${arxivId}`
         );
       }
-    }
+    } // End author loop
   } catch (error) {
     console.error(
       `Top-level error processing paper item "${title || paperUrl}":`,
@@ -921,9 +1029,11 @@ async function fetchPapersFromRSS(category) {
     const feedPubDate = new Date(feed.pubDate || Date.now());
     let processedCount = 0;
     for (const item of feed.items) {
-      const itemCategories = item.categories || [category];
+      const itemCategories = item.categories || [category]; // Use categories from item if available
       await checkAndInsertPaperIfNew(item, itemCategories, feedPubDate);
       processedCount++;
+      // Optional small delay between processing papers from RSS
+      // await delay(100);
     }
     console.log(
       `Finished processing ${processedCount} items for category "${category}"`
@@ -936,17 +1046,16 @@ async function fetchPapersFromRSS(category) {
   }
 }
 
-async function fetchNewPapers() {
-  console.log("Starting master fetch process from arXiv RSS...");
+/** Refreshes the materialized view */
+async function refreshMaterializedView() {
+  console.log(
+    "Attempting to refresh materialized view 'unique_authors_data_view'..."
+  );
   try {
-    for (const category of categories) await fetchPapersFromRSS(category);
-    console.log(
-      "Attempting to refresh materialized view 'unique_authors_data_view'..."
-    );
-    // Ensure execute_sql function exists in Supabase
+    // Ensure execute_sql function exists in Supabase (used for REFRESH)
+    // Use 'sql' parameter based on previous error hints
     const { error: rpcError } = await supabase.rpc("execute_sql", {
-      sql_text:
-        "REFRESH MATERIALIZED VIEW CONCURRENTLY public.unique_authors_data_view;",
+      sql: "REFRESH MATERIALIZED VIEW CONCURRENTLY public.unique_authors_data_view;",
     });
     if (rpcError) {
       console.error(
@@ -955,7 +1064,7 @@ async function fetchNewPapers() {
       );
       console.log("Attempting non-concurrent refresh as fallback...");
       const { error: fallbackRpcError } = await supabase.rpc("execute_sql", {
-        sql_text: "REFRESH MATERIALIZED VIEW public.unique_authors_data_view;",
+        sql: "REFRESH MATERIALIZED VIEW public.unique_authors_data_view;",
       });
       if (fallbackRpcError)
         console.error(
@@ -966,10 +1075,23 @@ async function fetchNewPapers() {
         console.log(
           "Materialized view refreshed successfully (non-concurrently)."
         );
-    } else
+    } else {
       console.log(
         "Materialized view refreshed successfully via RPC (concurrently)."
       );
+    }
+  } catch (error) {
+    console.error("Error calling RPC to refresh materialized view:", error);
+  }
+}
+
+async function fetchNewPapers() {
+  console.log("Starting master fetch process from arXiv RSS...");
+  try {
+    for (const category of categories) {
+      await fetchPapersFromRSS(category);
+    }
+    await refreshMaterializedView(); // Refresh view after processing all categories
   } catch (error) {
     console.error("Error during the main fetchNewPapers execution:", error);
   } finally {

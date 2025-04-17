@@ -117,18 +117,26 @@ async function getOrcidApiToken() {
   }
 }
 
+// Updated searchOrcidByName to be stricter
 async function searchOrcidByName(searchTerm, token) {
   if (!searchTerm || !token) return null;
   const nameParts = searchTerm.trim().split(/\s+/);
   const familyName = nameParts.pop() || "";
   const givenNames = nameParts.join(" ");
-  let query = `family-name:${familyName}`;
+
+  // --- MODIFIED QUERY ---
+  // Only search by family name and exact full given name (if available)
+  let query = `family-name:"${familyName}"`; // Use quotes for potentially better matching
   if (givenNames) {
-    query += ` AND (given-names:"${givenNames}" OR given-names:${givenNames.charAt(
-      0
-    )}*)`;
+    query += ` AND given-names:"${givenNames}"`;
+  } else {
+    console.log(
+      `      WARN: Only one name part found ('${familyName}'). Searching by family name only.`
+    );
   }
-  console.log(`      Searching ORCID with query: ${query}`);
+  // --- END MODIFIED QUERY ---
+
+  console.log(`      Searching ORCID with STRICT query: ${query}`);
   try {
     const response = await axios.get(`${ORCID_API_URL}/search`, {
       headers: { Accept: "application/json", Authorization: `Bearer ${token}` },
@@ -138,7 +146,9 @@ async function searchOrcidByName(searchTerm, token) {
     const results = response.data?.result || [];
     const numFound = response.data?.["num-found"] || 0;
     if (numFound === 0 || !results[0]) {
-      console.log(`      ORCID search found no results for query: ${query}`);
+      console.log(
+        `      ORCID strict search found no results for query: ${query}`
+      );
       return null;
     }
     const topResult = results[0];
@@ -150,18 +160,20 @@ async function searchOrcidByName(searchTerm, token) {
       );
       return null;
     }
+    // isHighConfidence is true only if exactly one result is found
     const isHighConfidence = numFound === 1;
     console.log(
-      `      ORCID search found ${numFound} result(s). Top result: ${orcidId} (HighConf: ${isHighConfidence})`
+      `      ORCID strict search found ${numFound} result(s). Top result: ${orcidId} (HighConf: ${isHighConfidence})`
     );
+    // Return confidence flag along with the top result's ORCID
     return { orcid: orcidId, name: null, isHighConfidence: isHighConfidence };
   } catch (error) {
     if (error.response && error.response.status === 404) {
-      console.log(`      ORCID search returned 404 for query: ${query}`);
+      console.log(`      ORCID strict search returned 404 for query: ${query}`);
       return null;
     }
     console.error(
-      `      Failed to search ORCID by name (${searchTerm}): ${error.message}`,
+      `      Failed to search ORCID by name (strict) (${searchTerm}): ${error.message}`,
       error.response?.status ? `Status: ${error.response.status}` : ""
     );
     return null;
@@ -383,6 +395,7 @@ async function triggerOrcidEnrichment(authorId, orcidId) {
 // --- Author Resolution Logic ---
 /**
  * Finds or creates an author record based on name and potential ORCID.
+ * Only uses ORCID search results if they are high-confidence (1 result).
  * @param {string} original_name_string - The name string from the paper's author list.
  * @param {string|null} orcid_from_source - ORCID ID found via Crossref (if any).
  * @param {'FROM_CROSSREF'|'SEARCH_ORCID'} source_type - How the ORCID was (or wasn't) found.
@@ -472,14 +485,16 @@ async function resolveAuthor(
       const orcidToken = await getOrcidApiToken();
       let orcidSearchResult = null;
       if (orcidToken) {
-        orcidSearchResult = await searchOrcidByName(sanitized_name, orcidToken);
+        orcidSearchResult = await searchOrcidByName(sanitized_name, orcidToken); // Uses stricter search now
       }
 
-      if (orcidSearchResult?.orcid) {
-        const potential_orcid = orcidSearchResult.orcid;
+      // --- MODIFIED: Check confidence before proceeding ---
+      if (orcidSearchResult?.orcid && orcidSearchResult.isHighConfidence) {
+        // --- HIGH CONFIDENCE - Proceed with ORCID ---
         console.log(
-          `         ORCID Search found potential match: ${potential_orcid} for "${sanitized_name}"`
+          `         ORCID Search found high-confidence match: ${orcidSearchResult.orcid} for "${sanitized_name}"`
         );
+        const potential_orcid = orcidSearchResult.orcid;
 
         // Check if this ORCID is already assigned to ANY author
         const { data: existingAuthorWithOrcid, error: checkError } =
@@ -494,55 +509,36 @@ async function resolveAuthor(
             `DB error checking for existing ORCID ${potential_orcid}: ${checkError.message}`
           );
 
+        let paperFoundOnProfile = false; // Check works regardless of existing/new author
+        if (orcidToken) {
+          paperFoundOnProfile = await checkOrcidWorksForPaper(
+            potential_orcid,
+            arxivId,
+            doi,
+            orcidToken
+          );
+        }
+        // Set status based on works check for the link
+        verification_status = paperFoundOnProfile
+          ? "ORCID_MATCH_CONFIRMED"
+          : "ORCID_MATCH_POTENTIAL";
+
         if (existingAuthorWithOrcid) {
-          // ORCID already exists, link to this existing author
+          // High-confidence ORCID matches an existing author record
           author_id = existingAuthorWithOrcid.id;
-          resolved_orcid_id = potential_orcid; // Confirm this is the ORCID we are using
+          resolved_orcid_id = potential_orcid;
           console.log(
-            `         Found existing author ${author_id} ("${existingAuthorWithOrcid.canonical_name}") via ORCID search result ${potential_orcid}.`
+            `         Found existing author ${author_id} ("${existingAuthorWithOrcid.canonical_name}") via high-confidence search. Final Status: ${verification_status}`
           );
-          // Now check works for this existing author
-          let paperFoundOnProfile = false;
-          if (orcidToken) {
-            paperFoundOnProfile = await checkOrcidWorksForPaper(
-              resolved_orcid_id,
-              arxivId,
-              doi,
-              orcidToken
-            );
-          }
-          verification_status = paperFoundOnProfile
-            ? "ORCID_MATCH_CONFIRMED"
-            : "ORCID_MATCH_POTENTIAL";
-          console.log(
-            `         Works check result for existing author ${author_id}: Paper found = ${paperFoundOnProfile}. Final Status: ${verification_status}`
-          );
+          // Enrichment will be triggered later if orcid_id is set
         } else {
-          // ORCID found via search, and it's not assigned to anyone yet. Create a new author.
-          resolved_orcid_id = potential_orcid; // This is the ORCID we'll use
+          // High-confidence ORCID is new. Create a new author.
+          resolved_orcid_id = potential_orcid;
           console.log(
-            `         Potential ORCID ${resolved_orcid_id} is new. Checking works before inserting author...`
+            `         High-confidence ORCID ${resolved_orcid_id} is new. Final Status: ${verification_status}`
           );
-
-          let paperFoundOnProfile = false;
-          if (orcidToken) {
-            paperFoundOnProfile = await checkOrcidWorksForPaper(
-              resolved_orcid_id,
-              arxivId,
-              doi,
-              orcidToken
-            );
-          }
-          verification_status = paperFoundOnProfile
-            ? "ORCID_MATCH_CONFIRMED"
-            : "ORCID_MATCH_POTENTIAL";
           console.log(
-            `         Works check result for new ORCID ${resolved_orcid_id}: Paper found = ${paperFoundOnProfile}. Status: ${verification_status}`
-          );
-
-          // Insert the new author record with the found ORCID
-          console.log(
-            `         Inserting new author with searched ORCID ${resolved_orcid_id} for name "${sanitized_name}"...`
+            `         Inserting new author with high-confidence searched ORCID ${resolved_orcid_id} for name "${sanitized_name}"...`
           );
           const { data: insertedAuthor, error: insertError } = await supabase
             .from("authors")
@@ -552,7 +548,6 @@ async function resolveAuthor(
             })
             .select("id")
             .single();
-
           if (insertError) {
             // Removed race condition handling based on user feedback
             throw new Error(
@@ -561,14 +556,36 @@ async function resolveAuthor(
           } else {
             author_id = insertedAuthor.id;
             console.log(`         Inserted new author ${author_id}.`);
+            // Enrichment will be triggered later if orcid_id is set
           }
-        }
-      }
-      // --- Stage 3: No ORCID found (neither Crossref nor Search) ---
-      if (!author_id) {
-        // No ORCID found by any means. Find or create a placeholder author (orcid_id IS NULL).
+        } // End if/else existingAuthorWithOrcid (High Confidence)
+      } else if (
+        orcidSearchResult?.orcid &&
+        !orcidSearchResult.isHighConfidence
+      ) {
+        // Low confidence result - log and skip ORCID association
         console.log(
-          `         No ORCID found for "${sanitized_name}". Checking/creating placeholder author...`
+          `         ORCID Search found match ${orcidSearchResult.orcid} but confidence is low (multiple results). Skipping ORCID association.`
+        );
+        resolved_orcid_id = null; // Ensure no ORCID is associated with this author for now
+        // author_id remains null, flow will fall through to Stage 3
+      } else {
+        // No search results
+        console.log(
+          `         No ORCID found via search for "${sanitized_name}".`
+        );
+        resolved_orcid_id = null;
+        // author_id remains null, will proceed to placeholder check
+      }
+
+      // --- Stage 3: No ORCID found OR low confidence search ---
+      // This block is reached if:
+      // - source_type was 'SEARCH_ORCID' and no result was found
+      // - source_type was 'SEARCH_ORCID' and result had low confidence (author_id was not set above)
+      if (!author_id) {
+        // No ORCID found by any means OR low confidence. Find or create a placeholder author (orcid_id IS NULL).
+        console.log(
+          `         No high-confidence ORCID found for "${sanitized_name}". Checking/creating placeholder author...`
         );
         resolved_orcid_id = null; // Ensure no ORCID is associated
         verification_status = "UNVERIFIED";
@@ -632,10 +649,11 @@ async function resolveAuthor(
     }
 
     // Return the resolved author ID, final status, and the ORCID (if any)
+    // This ORCID ID is used by the caller to decide whether to trigger enrichment
     return {
       author_id: author_id,
       verification_status: verification_status,
-      orcid_id: resolved_orcid_id,
+      orcid_id: resolved_orcid_id, // Will be null if placeholder or low-confidence search
     };
   } catch (error) {
     console.error(
@@ -963,7 +981,7 @@ async function processPaperAuthors(paper) {
       }
     }
 
-    // Resolve author: Use Crossref ORCID if found, otherwise search by name
+    // Resolve author: Use Crossref ORCID if found, otherwise search (stricter search + high-confidence check now)
     // Pass effectiveDoi down to resolveAuthor
     if (crossrefOrcidMatch) {
       resolvedAuthorData = await resolveAuthor(
@@ -993,27 +1011,19 @@ async function processPaperAuthors(paper) {
         resolvedAuthorData.verification_status
       );
 
-      // Trigger enrichment if confirmed and ORCID exists
-      if (
-        resolvedAuthorData.verification_status === "ORCID_MATCH_CONFIRMED" &&
-        resolvedAuthorData.orcid_id
-      ) {
-        // Add a small delay before enrichment call if needed
-        // await delay(100);
-        await triggerOrcidEnrichment(
-          resolvedAuthorData.author_id,
-          resolvedAuthorData.orcid_id
+      // --- CORRECTED ENRICHMENT TRIGGER ---
+      // Trigger enrichment if an ORCID ID was successfully associated with the author record
+      // by resolveAuthor (either from Crossref or high-confidence search).
+      if (resolvedAuthorData.orcid_id) {
+        console.log(
+          `   ORCID ${resolvedAuthorData.orcid_id} associated with Author ${resolvedAuthorData.author_id}. Triggering enrichment (Status: ${resolvedAuthorData.verification_status}).`
         );
-      } else if (
-        resolvedAuthorData.verification_status === "FROM_CROSSREF" &&
-        resolvedAuthorData.orcid_id
-      ) {
-        // Also enrich if confirmed via Crossref
         await triggerOrcidEnrichment(
           resolvedAuthorData.author_id,
           resolvedAuthorData.orcid_id
         );
       }
+      // --- END CORRECTED ENRICHMENT TRIGGER ---
     } else {
       console.error(
         `      Could not resolve/create author record for "${sanitized_original_name}" on paper ${paperId}`
