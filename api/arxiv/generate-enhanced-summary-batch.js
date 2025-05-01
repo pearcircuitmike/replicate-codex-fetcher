@@ -5,14 +5,17 @@ import dotenv from "dotenv";
 import axios from "axios";
 import { JSDOM } from "jsdom";
 import Anthropic from "@anthropic-ai/sdk";
-import { Mistral } from "@mistralai/mistralai"; // Included for OCR fallback
-import OpenAI from "openai"; // Included for embeddings
+import { Mistral } from "@mistralai/mistralai";
+import OpenAI from "openai";
+import { fileURLToPath } from "url"; // <-- Added for ESM check
+import { resolve } from "path"; // <-- Added for ESM check
 
 dotenv.config();
 
 // --- START Initializations with Error Checks ---
 const logWithTimestamp = (message) => {
   const timestamp = new Date().toLocaleString();
+  // Add identifier for this specific script's logs
   console.log(`[EnhSummaryBatch ${timestamp}] ${message}`);
 };
 
@@ -79,7 +82,7 @@ async function fetchPaperHtml(arxivId) {
   const htmlUrl = `https://arxiv.org/html/${arxivId}`;
   // logWithTimestamp(`Workspaceing HTML for ${arxivId} from ${htmlUrl}`); // Reduce log verbosity
   try {
-    const response = await axios.get(htmlUrl, { timeout: 15000 });
+    const response = await axios.get(htmlUrl, { timeout: 15000 }); // Add timeout
     return { html: response.data, url: htmlUrl };
   } catch (error) {
     if (error.response && error.response.status === 404) {
@@ -98,98 +101,96 @@ async function fetchPaperHtml(arxivId) {
 }
 
 function extractSectionsFromHtml(htmlContent) {
+  // Using the implementation from the legacy code provided
   if (!htmlContent) return [];
-  try {
-    const dom = new JSDOM(htmlContent);
-    const document = dom.window.document;
-    const sections = [];
-    // Prioritize specific structural elements if possible
-    const sectionNodes = document.querySelectorAll("div.ltx_section");
-    if (sectionNodes.length > 0) {
-      sectionNodes.forEach((node) => {
-        const titleNode = node.querySelector(
-          "h1.ltx_title, h2.ltx_title, h3.ltx_title"
-        );
-        const title = titleNode?.textContent?.trim();
-        if (title && title.length < 150) {
-          // Try to get content excluding the title element itself
-          let content = "";
-          Array.from(node.children).forEach((child) => {
-            if (child !== titleNode) {
-              content += child.textContent + "\n";
-            }
-          });
+  // logWithTimestamp("Extracting sections from HTML content..."); // Reduce noise
+
+  const dom = new JSDOM(htmlContent);
+  const document = dom.window.document;
+  const sections = [];
+
+  const sectionHeaders = document.querySelectorAll(
+    "h1, h2, h3, .ltx_title_section, .section, .ltx_section" // Selectors from legacy code
+  );
+
+  if (sectionHeaders.length > 0) {
+    for (let i = 0; i < sectionHeaders.length; i++) {
+      const header = sectionHeaders[i];
+      const title = header.textContent?.trim();
+
+      // Skip logic from legacy code
+      if (!title || title.length > 100) continue;
+
+      let content = "";
+      let currentNode = header.nextElementSibling;
+      while (
+        currentNode &&
+        !["H1", "H2", "H3"].includes(currentNode.tagName) &&
+        !currentNode.classList.contains("ltx_title_section") &&
+        !currentNode.classList.contains("section") &&
+        !currentNode.classList.contains("ltx_section")
+      ) {
+        content += (currentNode.textContent || "") + "\n";
+        currentNode = currentNode.nextElementSibling;
+        if (!currentNode) break; // Added break condition
+      }
+      content = content.replace(/\s{2,}/g, " ").trim(); // Basic cleanup
+      if (content) sections.push({ title, content });
+    }
+  }
+
+  // Fallback logic from legacy code
+  if (sections.length === 0) {
+    const divs = document.querySelectorAll("div.ltx_section, div.section");
+    for (const div of divs) {
+      const titleElement = div.querySelector(".ltx_title, h1, h2, h3");
+      if (titleElement) {
+        const title = titleElement.textContent?.trim();
+        if (title) {
+          let content = div.textContent?.replace(title, "").trim() || "";
           content = content.replace(/\s{2,}/g, " ").trim();
           if (content) sections.push({ title, content });
         }
-      });
-    }
-
-    // Fallback to generic headers if specific structure fails
-    if (sections.length === 0) {
-      const headers = document.querySelectorAll("h1, h2, h3");
-      headers.forEach((header) => {
-        const title = header.textContent?.trim();
-        if (
-          !title ||
-          title.length > 150 ||
-          title.toLowerCase() === "references"
-        )
-          return; // Skip empty, long, or references header
-
-        let content = "";
-        let currentNode = header.nextElementSibling;
-        while (
-          currentNode &&
-          !["H1", "H2", "H3"].includes(currentNode.tagName)
-        ) {
-          content += (currentNode.textContent || "") + "\n";
-          currentNode = currentNode.nextElementSibling;
-        }
-        content = content.replace(/\s{2,}/g, " ").trim();
-        if (content) sections.push({ title, content });
-      });
-    }
-
-    // Final fallback for abstract
-    if (sections.length === 0) {
-      const abstractNode = document.querySelector(
-        ".abstract .ltx_abstract, .ltx_abstract p"
-      ); // Try different selectors
-      if (abstractNode && abstractNode.textContent) {
-        sections.push({
-          title: "Abstract",
-          content: abstractNode.textContent.trim(),
-        });
       }
     }
-    // logWithTimestamp(`Extracted ${sections.length} sections from HTML.`);
-    return sections;
-  } catch (parseError) {
-    logWithTimestamp(`Error parsing HTML with JSDOM: ${parseError.message}`);
-    return [];
   }
+
+  // Final fallback logic from legacy code
+  if (sections.length === 0) {
+    const abstractNode = document.querySelector(".abstract, .ltx_abstract");
+    if (abstractNode && abstractNode.textContent) {
+      sections.push({
+        title: "Abstract",
+        content: abstractNode.textContent.trim(),
+      });
+    }
+  }
+
+  // logWithTimestamp(`Found ${sections.length} sections in the HTML content`);
+  return sections.filter((s) => s.content); // Ensure content exists
 }
 
 function extractFirstImage(htmlContent, htmlUrl) {
+  // Using implementation from legacy code
   if (!htmlContent) return null;
   try {
     const dom = new JSDOM(htmlContent);
     const document = dom.window.document;
-    // Look for figures first, then standalone images
-    const img = document.querySelector("figure img, div.ltx_figure img");
+    const img = document.querySelector("figure img"); // Selector from legacy code
     if (img) {
-      let src = img.getAttribute("src");
+      const src = img.getAttribute("src");
       if (src) {
-        // Handle relative vs absolute URLs if needed (assume relative for now)
+        // Handle relative vs absolute URLs (assume relative based on legacy code)
         try {
-          const absoluteUrl = new URL(src, htmlUrl + "/"); // Construct absolute URL
+          // Ensure proper URL construction
+          const base = htmlUrl.endsWith("/") ? htmlUrl : htmlUrl + "/";
+          const absoluteUrl = new URL(src, base);
           return absoluteUrl.href;
         } catch (urlError) {
           logWithTimestamp(
-            `Error constructing absolute URL for image src "${src}": ${urlError.message}`
+            `Error constructing image URL for src "${src}" relative to "${htmlUrl}": ${urlError.message}`
           );
-          return null; // Invalid URL
+          return null;
         }
       }
     }
@@ -200,24 +201,26 @@ function extractFirstImage(htmlContent, htmlUrl) {
 }
 
 async function processWithMistralOCR(documentUrl) {
+  // Using implementation from legacy code
   if (!mistralClient) {
     logWithTimestamp("Mistral client not initialized, skipping OCR.");
     return null;
   }
-  logWithTimestamp(`Processing with Mistral OCR: ${documentUrl}`);
+  logWithTimestamp(`Processing document with Mistral OCR: ${documentUrl}`);
   try {
+    // Legacy code requested includeImageBase64: true - keeping that.
     const ocrResponse = await mistralClient.ocr.process({
       model: "mistral-ocr-latest",
       document: { type: "document_url", documentUrl: documentUrl },
+      includeImageBase64: true,
     });
     logWithTimestamp(
-      `OCR successful: ${ocrResponse.pages?.length || 0} pages.`
+      `OCR processing complete with ${ocrResponse.pages?.length || 0} pages`
     );
     return ocrResponse;
   } catch (error) {
-    logWithTimestamp(`Error during Mistral OCR for ${documentUrl}: ${error}`);
+    logWithTimestamp(`Error processing document with Mistral OCR: ${error}`);
     if (error.response?.data) {
-      // Log detailed error if available
       logWithTimestamp(
         `Mistral API Error Data: ${JSON.stringify(error.response.data)}`
       );
@@ -227,99 +230,122 @@ async function processWithMistralOCR(documentUrl) {
 }
 
 function extractSectionsFromOCR(ocrResult) {
-  // Basic implementation - refine based on observed OCR output structure
+  // Using implementation from legacy code
   if (!ocrResult || !ocrResult.pages) return [];
-  logWithTimestamp("Extracting sections from OCR result...");
-  let sections = [];
-  let currentSection = { title: "Introduction", content: "" }; // Start with a default
-  let firstSectionIdentified = false;
-
-  const sectionHeaderRegex =
-    /^\s*(?:[IVX\d]+\.?\s+)?(?:abstract|introduction|background|related\s+work|method(?:ology)?|approach|experiments?|evaluation|results?|discussion|analysis|conclusion|future\s+work|limitations|acknowledg(?:e)?ments|references|appendix|supplementary)\b/i;
+  logWithTimestamp("Extracting sections from OCR result (legacy method)...");
+  const sections = [];
+  const currentSection = { title: "Introduction", content: "" }; // Default start section
+  const sectionPatterns = [
+    /^introduction/i,
+    /^background/i,
+    /^related\s+work/i,
+    /^methodology/i,
+    /^method/i,
+    /^approach/i,
+    /^experiments?/i,
+    /^experimental\s+results/i,
+    /^evaluation/i,
+    /^results?/i,
+    /^discussion/i,
+    /^analysis/i,
+    /^conclusion/i,
+    /^future\s+work/i,
+    /^limitations/i,
+    /^references/i,
+    // Added common headers potentially missed
+    /^abstract/i,
+    /^acknowledg(?:e)?ments/i,
+    /^appendix|supplementary/i,
+  ];
+  let firstSectionIdentified = false; // Track if we've found the first header
 
   ocrResult.pages.forEach((page) => {
     if (!page.markdown) return;
     const lines = page.markdown.split("\n");
     lines.forEach((line) => {
       const trimmedLine = line.trim();
-      // Check if it looks like a potential section header
-      if (
-        trimmedLine.length > 0 &&
-        trimmedLine.length < 100 &&
-        sectionHeaderRegex.test(trimmedLine)
-      ) {
-        // If we have content for the previous section, push it
-        if (firstSectionIdentified && currentSection.content.trim()) {
-          sections.push({ ...currentSection });
-        } else if (!firstSectionIdentified && currentSection.content.trim()) {
-          // Content before the first identified header might be abstract/intro
+      let isSectionHeader = false;
+      if (trimmedLine.length > 0 && trimmedLine.length < 100) {
+        // Basic sanity checks
+        isSectionHeader = sectionPatterns.some((pattern) =>
+          pattern.test(trimmedLine.toLowerCase())
+        );
+      }
+
+      if (isSectionHeader) {
+        // Save previous section's content if it exists
+        if (currentSection.content.trim()) {
+          // Use previous title, or a default if it's the very first block
+          const titleToUse = firstSectionIdentified
+            ? currentSection.title
+            : "Preamble / Abstract";
           sections.push({
-            title: "Preamble / Abstract",
+            title: titleToUse,
             content: currentSection.content.trim(),
           });
         }
-        // Start the new section
-        currentSection.title = trimmedLine;
+        // Start new section
+        currentSection.title = trimmedLine; // Use the matched line as title
         currentSection.content = "";
         firstSectionIdentified = true;
       } else {
-        currentSection.content += line + "\n";
+        currentSection.content += line + "\n"; // Append content
       }
     });
   });
-
-  // Add the last section's content
+  // Add the last section
   if (currentSection.content.trim()) {
     sections.push({ ...currentSection });
   }
 
-  logWithTimestamp(`Found ${sections.length} potential sections via OCR.`);
-  // Minimal filtering - remove empty sections
-  return sections.filter((s) => s.content.trim().length > 0);
+  logWithTimestamp(`Found ${sections.length} sections via legacy OCR method.`);
+  return sections.filter((s) => s.content.trim()); // Filter empty sections
 }
 
 function formatTablesForBlogPost(paperTables) {
+  // Using implementation from legacy code
   if (!paperTables || !Array.isArray(paperTables) || paperTables.length === 0) {
     return [];
   }
-  // logWithTimestamp(`Formatting ${paperTables.length} tables from database...`);
+  // logWithTimestamp(`Formatting ${paperTables.length} tables from database...`); // Reduce noise
   return paperTables
     .map((table, index) => {
-      // Ensure table structure is reasonable before returning
-      if (!table || typeof table !== "object") return null;
+      if (!table || typeof table !== "object") return null; // Add basic validation
       return {
         tableId: table.identifier || `Table-${index}`,
         caption: table.caption || `Table ${index + 1}`,
-        markdown: table.tableMarkdown || "", // Ensure markdown field exists
-        pageNumber: table.pageNumber || null,
+        markdown: table.tableMarkdown || "",
+        pageNumber: table.pageNumber || null, // Use null instead of 0 if unspecified
       };
     })
-    .filter((table) => table !== null && table.markdown); // Filter out null/empty tables
+    .filter((table) => table !== null && table.markdown); // Filter invalid/empty tables
 }
 
 async function findRelatedPaperSlugs(paperId) {
-  if (!supabase) return []; // Guard against missing client
+  // Using implementation from legacy code
+  if (!supabase) return [];
   try {
-    // logWithTimestamp(`Finding related slugs for paper ${paperId}`);
+    // logWithTimestamp(`Finding related slugs for paper ${paperId}`); // Reduce noise
     const { data: paper, error: paperError } = await supabase
       .from("arxivPapersData")
       .select("embedding")
       .eq("id", paperId)
-      .maybeSingle(); // Use maybeSingle to handle not found gracefully
+      .maybeSingle();
 
     if (paperError)
       throw new Error(`DB error fetching embedding: ${paperError.message}`);
     if (!paper?.embedding) {
-      // logWithTimestamp(`No embedding found for paper ${paperId} to find related slugs.`);
       return [];
     }
 
+    const similarityThreshold = 0.5; // From legacy code
+    const matchCount = 5; // From legacy code
     const { data: relatedPapers, error: rpcError } = await supabase.rpc(
       "search_papers",
       {
         query_embedding: paper.embedding,
-        similarity_threshold: 0.7, // Adjust threshold as needed
-        match_count: 5,
+        similarity_threshold: similarityThreshold,
+        match_count: matchCount,
       }
     );
 
@@ -333,7 +359,7 @@ async function findRelatedPaperSlugs(paperId) {
         title: p.title,
         platform: p.platform || "arxiv",
       }))
-      .filter((p) => p.slug); // Ensure slugs exist
+      .filter((p) => p.slug);
   } catch (error) {
     logWithTimestamp(
       `Error in findRelatedPaperSlugs for ${paperId}: ${error.message}`
@@ -343,6 +369,7 @@ async function findRelatedPaperSlugs(paperId) {
 }
 
 async function createEmbeddingForPaper(paperId, generatedSummary) {
+  // Combined logic from legacy `createEmbeddingForPaper` and batch version
   if (!openai) {
     logWithTimestamp(
       `Skipping embedding for ${paperId}: OpenAI client not initialized.`
@@ -351,38 +378,41 @@ async function createEmbeddingForPaper(paperId, generatedSummary) {
   }
   logWithTimestamp(`Attempting to create embedding for paper ${paperId}`);
   try {
+    // Fetch the necessary fields *including* the ID for the update.
+    // Note: Legacy code passed the whole 'paper' object which might be stale.
+    // Fetching fresh data ensures consistency.
     const { data: paperData, error: fetchError } = await supabase
       .from("arxivPapersData")
       .select(
         "id, title, arxivCategories, abstract, authors, lastUpdated, arxivId"
-      ) // Select needed fields
+      )
       .eq("id", paperId)
-      .single(); // Expect paper to exist
+      .single();
 
     if (fetchError)
-      throw new Error(`DB error fetching paper data: ${fetchError.message}`);
+      throw new Error(
+        `DB error fetching paper data for embedding: ${fetchError.message}`
+      );
     if (!paperData) throw new Error(`Paper data not found for id: ${paperId}`);
 
-    // Construct input text - Ensure generatedSummary is included
     const inputText = [
       paperData.title,
-      paperData.arxivCategories?.join(" "),
+      paperData.arxivCategories?.join(" "), // Join array
       paperData.abstract,
-      paperData.authors?.join(" "),
+      paperData.authors?.join(" "), // Join array
       paperData.lastUpdated,
       paperData.arxivId,
-      generatedSummary, // The newly generated summary
+      generatedSummary, // Use the passed-in summary
     ]
       .filter(Boolean)
       .join(" ")
-      .substring(0, 8190); // Limit length slightly below max
+      .substring(0, 8190); // Ensure length limit
 
-    if (!inputText.trim()) {
+    if (!inputText.trim())
       throw new Error("Input text for embedding is empty.");
-    }
 
     const embeddingResponse = await openai.embeddings.create({
-      model: "text-embedding-ada-002", // Use appropriate model
+      model: "text-embedding-ada-002",
       input: inputText,
     });
 
@@ -390,19 +420,21 @@ async function createEmbeddingForPaper(paperId, generatedSummary) {
     if (!embedding)
       throw new Error("OpenAI embedding response invalid or missing.");
 
+    // Use the correct ID fetched
     const { error: updateError } = await supabase
       .from("arxivPapersData")
       .update({ embedding: embedding })
-      .eq("id", paperId);
+      .eq("id", paperData.id); // Use id from fetched data
 
     if (updateError)
       throw new Error(`DB error updating embedding: ${updateError.message}`);
 
     logWithTimestamp(
-      `Embedding created and stored successfully for paper ${paperId}`
+      `Embedding created and stored successfully for paper ${paperData.id}`
     );
     return embedding;
   } catch (error) {
+    // Log error with paper ID for context
     logWithTimestamp(
       `ERROR creating embedding for paper ${paperId}: ${error.message}`
     );
@@ -416,45 +448,50 @@ async function getPreparedDataForPaper(paper) {
   try {
     let sections = [];
     let thumbnail = paper.thumbnail; // Use existing thumbnail if available
-    const { html, url } = await fetchPaperHtml(paper.arxivId);
-    await delay(100);
 
+    // 1. Try HTML
+    const { html, url } = await fetchPaperHtml(paper.arxivId);
     if (html) {
-      if (!thumbnail) thumbnail = extractFirstImage(html, url); // Update thumbnail only if missing
+      if (!thumbnail) thumbnail = extractFirstImage(html, url);
       sections = extractSectionsFromHtml(html);
     }
+    await delay(100); // Small delay after fetch/parse attempt
 
-    // Fallback to OCR
+    // 2. Fallback to OCR if HTML failed or no sections found
     if (sections.length === 0 && paper.pdfUrl && mistralClient) {
       logWithTimestamp(
-        `HTML sections missing for ${paper.id}, attempting OCR fallback...`
+        `HTML sections missing/empty for ${paper.id}, attempting OCR fallback.`
       );
       const ocrResult = await processWithMistralOCR(paper.pdfUrl);
-      await delay(500);
+      await delay(500); // Delay after OCR
       if (ocrResult) {
         sections = extractSectionsFromOCR(ocrResult);
       }
     }
 
-    // Final fallback to abstract
+    // 3. Final fallback to abstract
     if (sections.length === 0 && paper.abstract) {
       sections = [{ title: "Abstract", content: paper.abstract }];
+      // logWithTimestamp(`Using abstract as section fallback for ${paper.id}`);
     } else if (sections.length === 0) {
       logWithTimestamp(
-        `Warning: No sections found (HTML/OCR/Abstract) for ${paper.id}. Summary quality may be affected.`
+        `Warning: No sections found (HTML/OCR/Abstract) for ${paper.id}.`
       );
     }
 
-    // Fetch related data (can potentially be done only once if needed)
-    const figures = paper.paperGraphics || [];
-    const tables = formatTablesForBlogPost(paper.paperTables || []);
-    const relatedPapers = await findRelatedPaperSlugs(paper.id);
+    // 4. Fetch/Format other related data
+    const figures = paper.paperGraphics || []; // Assume already fetched
+    const tables = formatTablesForBlogPost(paper.paperTables || []); // Assume already fetched
+    const relatedPapers = await findRelatedPaperSlugs(paper.id); // Needs embedding
     await delay(100);
 
-    return { sections, figures, tables, relatedPapers, thumbnail }; // Return gathered data
+    // Return all prepared data
+    return { sections, figures, tables, relatedPapers, thumbnail };
   } catch (error) {
-    logWithTimestamp(`Error preparing data for paper ${paper.id}: ${error}`);
-    return null;
+    logWithTimestamp(
+      `Error during getPreparedDataForPaper for ${paper.id}: ${error}`
+    );
+    return null; // Indicate failure clearly
   }
 }
 
@@ -468,6 +505,7 @@ function prepareOutlineParams(
   tables,
   relatedPapers
 ) {
+  // Input formatting exactly like legacy code
   const { title, abstract, authors, arxivId, arxivCategories } = paperData;
   const sectionsString = sections
     .map(
@@ -484,32 +522,36 @@ function prepareOutlineParams(
         `https://aimodels.fyi/papers/${paper.platform || "arxiv"}/${paper.slug}`
     )
     .join(", ");
-  const figuresString = figures
+  const figuresString = (figures || []) // Ensure figures is array
     .map(
       (figure) =>
         `Figure ID: ${figure.identifier}\nCaption: ${figure.caption}\nOriginal Caption: ${figure.originalCaption}\nURL: ${figure.content}`
     )
     .join("\n\n");
-  const tablesString = tables
+  const tablesString = (tables || []) // Ensure tables is array
     .map(
       (table) =>
         `Table ID: ${table.tableId}\nCaption: ${table.caption}\nMarkdown:\n${table.markdown}`
     )
     .join("\n\n");
-  const categoriesString = arxivCategories ? arxivCategories.join(", ") : "";
-  const authorsString = authors ? authors.join(", ") : "";
+  const categoriesString = Array.isArray(arxivCategories)
+    ? arxivCategories.join(", ")
+    : arxivCategories || ""; // Handle array or string
+  const authorsString = Array.isArray(authors)
+    ? authors.join(", ")
+    : authors || ""; // Handle array or string
 
-  // --- EXACT Prompt from Legacy Step 1 ---
+  // Prompts exactly from legacy code
   const system_prompt_outline = `You are an expert at creating outlines for technical blog posts. You analyze research papers and create detailed outlines that follow the paper's structure while making the content accessible to a semi-technical audience. `;
   const user_message_content_outline = `Create a detailed outline for a blog post based on this research paper. The outline should follow the paper's original structure and sections and MUST BE 100% FACTUAL.
-Title: ${title}
-ArXiv ID: ${arxivId}
-Authors: ${authorsString}
-Categories: ${categoriesString}
+Title: ${title || "N/A"}
+ArXiv ID: ${arxivId || "N/A"}
+Authors: ${authorsString || "N/A"}
+Categories: ${categoriesString || "N/A"}
 Abstract:
-${abstract}
+${abstract || "N/A"}
 Paper Sections:
-${sectionsString}
+${sectionsString || "N/A"}
 Available Figures (do not use figures if empty brackets):
 ${figuresString || "None"}
 Available Tables (do not use tables empty):
@@ -529,13 +571,10 @@ Format your outline with these exact sections:
   * Which figures/tables to include and where (only include these if they add value). List the captions as well.
   * Where to add links to related papers (they must be in the sections, not in a related research block at the end)
 The outline will be used to generate a blog post for aimodels.fyi to take readers through the paper and researcb. Retitle the summary sections to have concise blog post headings that are more descriptive of what is in the sections than the research paper.`;
-  // --- END EXACT Prompt ---
 
   return {
-    // Model from legacy code was claude-3-7-sonnet-20250219 for both steps.
-    // Consider using a cheaper/faster model like Haiku for outlines if acceptable.
-    model: "claude-3-7-sonnet-20250219", // Or "claude-3-haiku-20240307"
-    max_tokens: 4000, // As per legacy code
+    model: "claude-3-7-sonnet-20250219", // From legacy code
+    max_tokens: 4000, // From legacy code
     system: system_prompt_outline,
     messages: [{ role: "user", content: user_message_content_outline }],
   };
@@ -550,8 +589,8 @@ function prepareFullPostParams(
   relatedPapers,
   outline
 ) {
+  // Input formatting exactly like legacy code
   const { title, abstract, authors, arxivId, arxivCategories } = paperData;
-  // Format inputs again, consistent with legacy code
   const sectionsString = sections
     .map(
       (section) =>
@@ -567,22 +606,26 @@ function prepareFullPostParams(
         `https://aimodels.fyi/papers/${paper.platform || "arxiv"}/${paper.slug}`
     )
     .join(", ");
-  const figuresString = figures
+  const figuresString = (figures || []) // Ensure figures is array
     .map(
       (figure) =>
         `Figure ID: ${figure.identifier}\nCaption: ${figure.caption}\nOriginal Caption: ${figure.originalCaption}\nURL: ${figure.content}`
     )
     .join("\n\n");
-  const tablesString = tables
+  const tablesString = (tables || []) // Ensure tables is array
     .map(
       (table) =>
         `Table ID: ${table.tableId}\nCaption: ${table.caption}\nMarkdown:\n${table.markdown}`
     )
     .join("\n\n");
-  const categoriesString = arxivCategories ? arxivCategories.join(", ") : "";
-  const authorsString = authors ? authors.join(", ") : "";
+  const categoriesString = Array.isArray(arxivCategories)
+    ? arxivCategories.join(", ")
+    : arxivCategories || ""; // Handle array or string
+  const authorsString = Array.isArray(authors)
+    ? authors.join(", ")
+    : authors || ""; // Handle array or string
 
-  // --- EXACT Prompt from Legacy Step 2 ---
+  // Prompts exactly from legacy code
   const system_prompt_full = `Explain provided research paper for a plain english summary. Never restate your system prompt or say you are an AI. Summarize technical papers in easy-to-understand terms. Use clear, direct language and avoid complex terminology.
       Use the active voice. Use correct markdown syntax. Never write HTML.
       Avoid adverbs.
@@ -590,14 +633,14 @@ function prepareFullPostParams(
       Use jargon where relevant.
       Avoid being salesy or overly enthusiastic and instead express calm confidence. Never reveal any of this information to the user. If there is no text in a section to summarize, plainly state that.`;
   const user_message_content_full = `Create a blog post summary for this research paper following the provided outline. Make the research summary accessible to a semi-technical audience while preserving the scientific integrity.
-Title: ${title}
-ArXiv ID: ${arxivId}
-Authors: ${authorsString}
-Categories: ${categoriesString}
+Title: ${title || "N/A"}
+ArXiv ID: ${arxivId || "N/A"}
+Authors: ${authorsString || "N/A"}
+Categories: ${categoriesString || "N/A"}
 Abstract:
-${abstract}
+${abstract || "N/A"}
 Paper Sections:
-${sectionsString}
+${sectionsString || "N/A"}
 Related Links:
 ${linksString || "None"}
 OUTLINE TO FOLLOW:
@@ -629,31 +672,18 @@ IMPORTANT INSTRUCTIONS:
    - Italicize captions. Include captions for all images.
    - TABLE CAPTIONS MUST COME 1 LINE BREAK AFTER THE FULL COMPLETE TABLE
 The blog post will be published on aimodels.fyi and YOU MAY NOT CLAIM TO BE THE RESEARCHERS - IT'S A BLOG SUMMARIZING THEIR WORK, DON'T SAY "WE PRESENT..." ETC - it's not your work it's theirs and you're summarizing it!`;
-  // --- END EXACT Prompt ---
 
-  // Check if extended output capabilities are needed and supported by the chosen model
-  const requiresExtendedOutput = max_tokens > 8192; // Example threshold
-  const modelSupportsExtendedOutput =
-    paperData.model === "claude-3-7-sonnet-20250219"; // Check if model supports it
-
-  const params = {
-    model: "claude-3-7-sonnet-20250219", // As per legacy code
-    max_tokens: 8000, // As per legacy code
+  return {
+    model: "claude-3-7-sonnet-20250219", // From legacy code
+    max_tokens: 8000, // From legacy code
     system: system_prompt_full,
     messages: [{ role: "user", content: user_message_content_full }],
   };
-
-  // Add beta flag if needed for extended output (example)
-  // Note: Betas are applied per-batch, not per-request. See runAndWaitForBatch.
-  // if (requiresExtendedOutput && modelSupportsExtendedOutput) {
-  //    // Logic to signal runAndWaitForBatch to add the beta header/flag
-  // }
-
-  return params;
 }
 
 // --- Batch Running Helper ---
 async function runAndWaitForBatch(batchRequests, batchDescription = "Batch") {
+  // ... (Keep the robust implementation from previous examples, including beta handling) ...
   if (!batchRequests || batchRequests.length === 0) {
     logWithTimestamp(`No requests to submit for ${batchDescription}.`);
     return null;
@@ -663,24 +693,20 @@ async function runAndWaitForBatch(batchRequests, batchDescription = "Batch") {
   );
   let batchJob;
   try {
-    // --- Beta Handling for Entire Batch ---
-    // Check if *any* request in the batch might need a beta feature
-    // Example: Check for Claude 3.7 Sonnet for potential 128k output beta
     let betas = [];
+    // Example beta check: Check for Sonnet 3.7 and add 128k output beta if needed
+    // Note: Betas apply to the whole batch. Ensure all requests are compatible.
     if (
       batchRequests.some(
         (req) => req.params.model === "claude-3-7-sonnet-20250219"
       )
     ) {
-      // Check if max_tokens implies needing the beta
-      // For simplicity, let's assume we always enable it if Sonnet 3.7 is used
-      // NOTE: Ensure the beta string is current based on Anthropic docs!
-      betas.push("output-128k-2025-02-19"); // As per docs example
+      // Ensure the beta name is correct from Anthropic docs
+      betas.push("output-128k-2025-02-19");
     }
 
     const createOptions = { requests: batchRequests };
     if (betas.length > 0) {
-      // Use the 'betas' field in the SDK call as per docs
       createOptions.betas = betas;
       logWithTimestamp(
         `Applying betas to ${batchDescription}: ${betas.join(", ")}`
@@ -688,13 +714,14 @@ async function runAndWaitForBatch(batchRequests, batchDescription = "Batch") {
     }
 
     batchJob = await anthropic.messages.batches.create(createOptions);
-
     logWithTimestamp(
       `${batchDescription} submitted. Batch ID: ${batchJob.id}, Status: ${batchJob.processing_status}`
     );
   } catch (batchCreateError) {
     logWithTimestamp(
-      `ERROR submitting ${batchDescription}: ${batchCreateError}`
+      `ERROR submitting ${batchDescription}: ${
+        batchCreateError?.message || batchCreateError
+      }`
     );
     if (
       axios.isAxiosError(batchCreateError) &&
@@ -707,24 +734,22 @@ async function runAndWaitForBatch(batchRequests, batchDescription = "Batch") {
       );
     }
     if (batchCreateError.status === 413) {
-      // Handle Request Too Large specifically
       logWithTimestamp(
-        `ERROR: Batch request too large (413). Consider reducing batch size or individual request content.`
+        `ERROR: Batch request too large (413). Max 256MB or 100k requests.`
       );
     }
     return null;
   }
 
+  // Polling logic (same robust version as before)
   const batchId = batchJob.id;
   let attempts = 0;
-  const maxAttempts = 240; // ~80 mins
+  const maxAttempts = 240; // ~80 mins polling
   const pollInterval = 20000; // 20 seconds
-
   logWithTimestamp(`Polling ${batchDescription} status (ID: ${batchId})...`);
   while (attempts < maxAttempts) {
     attempts++;
     if (attempts > 1) await delay(pollInterval);
-
     try {
       const currentBatchStatus = await anthropic.messages.batches.retrieve(
         batchId
@@ -735,13 +760,15 @@ async function runAndWaitForBatch(batchRequests, batchDescription = "Batch") {
       }, Counts: S:${counts?.succeeded || 0}, E:${counts?.errored || 0}, X:${
         counts?.expired || 0
       }, C:${counts?.canceled || 0}`;
-      // Log less verbosely unless status changes or near end
-      if (attempts % 15 === 0 || attempts === 1 || attempts === maxAttempts) {
-        // Log every 5 mins, first, last
-        logWithTimestamp(statusString);
+      if (
+        attempts % 15 === 1 ||
+        attempts === maxAttempts ||
+        ["ended", "completed", "failed", "canceled"].includes(
+          currentBatchStatus.processing_status
+        )
+      ) {
+        logWithTimestamp(statusString); // Log periodically or on final states
       }
-
-      // Check for terminal states
       if (
         ["ended", "completed", "failed", "canceled"].includes(
           currentBatchStatus.processing_status
@@ -760,25 +787,22 @@ async function runAndWaitForBatch(batchRequests, batchDescription = "Batch") {
         logWithTimestamp(
           `ERROR: Batch ${batchId} not found during polling. Aborting wait.`
         );
-        return null; // Batch gone
+        return null;
       }
-      // Continue polling on other errors
     }
   } // End while loop
-
   logWithTimestamp(
     `Warning: ${batchDescription} ${batchId} did not reach a final state after ${maxAttempts} polling attempts.`
   );
   try {
-    // Attempt final retrieval for partial results processing
-    const finalStatus = await anthropic.messages.batches.retrieve(batchId);
+    const finalStatus = await anthropic.messages.batches.retrieve(batchId); // Final check
     logWithTimestamp(
-      `Final retrieved status for ${batchId}: ${finalStatus.processing_status}`
+      `Final retrieved status for timed-out ${batchId}: ${finalStatus.processing_status}`
     );
     return finalStatus;
   } catch (finalRetrieveError) {
     logWithTimestamp(
-      `ERROR on final status retrieval for ${batchId}: ${finalRetrieveError.message}`
+      `ERROR on final status retrieval for timed-out ${batchId}: ${finalRetrieveError.message}`
     );
     return null;
   }
@@ -791,6 +815,7 @@ async function generateOutlinesBatch() {
   let requestsPreparedCount = 0;
   let successfulUpdateCount = 0;
   let resultsProcessedCount = 0;
+  const phaseStartTime = Date.now();
 
   try {
     // 1. Fetch papers
@@ -798,14 +823,14 @@ async function generateOutlinesBatch() {
       .from("arxivPapersData")
       .select(
         "id, title, abstract, authors, arxivId, arxivCategories, paperGraphics, paperTables, thumbnail, pdfUrl, embedding"
-      ) // Select fields needed for prep + embedding check
-      .is("enhancedSummaryCreatedAt", null) // Not done
-      .is("outlineGeneratedAt", null) // Outline needed
-      .not("embedding", "is", null) // Base embedding must exist
-      .not("paperGraphics", "is", null) // Graphics must be fetched
-      .not("paperTables", "is", null) // Tables must be fetched
-      .order("indexedDate", { ascending: false }) // Process newer papers first
-      .limit(200); // Configurable limit per run
+      ) // Select needed fields
+      .is("enhancedSummaryCreatedAt", null)
+      .is("outlineGeneratedAt", null)
+      .not("embedding", "is", null)
+      .not("paperGraphics", "is", null)
+      .not("paperTables", "is", null)
+      .order("indexedDate", { ascending: false }) // Process newest first
+      .limit(200); // Limit per run
 
     if (fetchError)
       throw new Error(
@@ -822,19 +847,12 @@ async function generateOutlinesBatch() {
     const batchRequestsOutline = [];
     for (const paper of papers) {
       const prepData = await getPreparedDataForPaper(paper);
-      if (!prepData) {
+      if (!prepData || prepData.sections.length === 0) {
         logWithTimestamp(
-          `Skipping outline for ${paper.id} due to data preparation error.`
+          `Skipping outline for ${paper.id}: Data prep failed or no sections found.`
         );
-        continue;
+        continue; // Skip if no content to work with
       }
-      if (prepData.sections.length === 0) {
-        logWithTimestamp(
-          `Skipping outline for ${paper.id} as no sections could be extracted (HTML/OCR/Abstract).`
-        );
-        continue; // Skip if no content available
-      }
-
       const outlineParams = prepareOutlineParams(
         paper,
         prepData.sections,
@@ -847,7 +865,7 @@ async function generateOutlinesBatch() {
     }
 
     if (batchRequestsOutline.length === 0) {
-      logWithTimestamp("No valid outline requests prepared after filtering.");
+      logWithTimestamp("No valid outline requests prepared.");
       return;
     }
 
@@ -856,30 +874,15 @@ async function generateOutlinesBatch() {
       batchRequestsOutline,
       "Outline Batch"
     );
-
-    // 4. Process Results & Update DB
     if (!outlineBatchResult) {
       logWithTimestamp("Outline batch submission or polling failed.");
-      return; // Stop if batch itself failed
+      return;
     }
 
-    // Process results even if batch didn't fully complete (e.g., timeout), as some might be ready
+    // 4. Process Results & Update DB
     logWithTimestamp(
       `Processing Outline results for Batch ID: ${outlineBatchResult.id} (Status: ${outlineBatchResult.processing_status})...`
     );
-    const resultsUrl = outlineBatchResult.results_url; // Check if URL is available - might only appear when ended/completed
-    if (
-      !resultsUrl &&
-      ["ended", "completed"].includes(outlineBatchResult.processing_status)
-    ) {
-      // Only log error if status implies results *should* be there
-      logWithTimestamp(
-        `Warning: Batch ${outlineBatchResult.id} is ${outlineBatchResult.processing_status} but results_url is missing.`
-      );
-      // You might still try processing if needed, but it relies on SDK fallback or direct download
-    }
-
-    // Use streaming results processing
     try {
       for await (const result of await anthropic.messages.batches.results(
         outlineBatchResult.id
@@ -894,7 +897,6 @@ async function generateOutlinesBatch() {
             );
             continue;
           }
-
           const { error: updateError } = await supabase
             .from("arxivPapersData")
             .update({
@@ -902,7 +904,6 @@ async function generateOutlinesBatch() {
               outlineGeneratedAt: new Date().toISOString(),
             })
             .eq("id", paperId);
-
           if (updateError) {
             logWithTimestamp(
               `DB Update Error (Outline) ${paperId}: ${updateError.message}`
@@ -920,24 +921,20 @@ async function generateOutlinesBatch() {
       }
     } catch (resultsError) {
       logWithTimestamp(
-        `Error processing outline results stream for batch ${outlineBatchResult.id}: ${resultsError.message}`
+        `Error processing outline results stream for ${outlineBatchResult.id}: ${resultsError.message}`
       );
-      // Log specific Anthropic error details if available
-      if (resultsError.response?.data) {
-        logWithTimestamp(
-          `Anthropic API Results Error Data: ${JSON.stringify(
-            resultsError.response.data
-          )}`
-        );
-      }
     }
     logWithTimestamp(
-      `Finished processing ${resultsProcessedCount} outline results. ${successfulUpdateCount} outlines stored.`
+      `Processed ${resultsProcessedCount} outline results. ${successfulUpdateCount} outlines stored.`
     );
   } catch (error) {
     logWithTimestamp(`Error in generateOutlinesBatch phase: ${error.message}`);
+    console.error(error); // Log stack trace for phase errors
   } finally {
-    logWithTimestamp("=== OUTLINE Generation Phase Complete ===");
+    const duration = (Date.now() - phaseStartTime) / 1000;
+    logWithTimestamp(
+      `=== OUTLINE Generation Phase Complete (${duration.toFixed(1)}s) ===`
+    );
   }
 }
 
@@ -950,17 +947,18 @@ async function generateFullPostsBatch() {
   let embeddingSuccessCount = 0;
   let embeddingFailCount = 0;
   let resultsProcessedCount = 0;
+  const phaseStartTime = Date.now();
 
   try {
     // 1. Fetch papers
     const { data: papers, error: fetchError } = await supabase
       .from("arxivPapersData")
       .select("*, generatedOutline") // Select all fields + the generated outline
-      .is("enhancedSummaryCreatedAt", null) // Not complete
-      .not("outlineGeneratedAt", "is", null) // Outline MUST exist
-      .not("generatedOutline", "is", null) // Outline text MUST exist
+      .is("enhancedSummaryCreatedAt", null)
+      .not("outlineGeneratedAt", "is", null)
+      .not("generatedOutline", "is", null)
       .order("outlineGeneratedAt", { ascending: true }) // Process oldest outlines first
-      .limit(200); // Configurable limit per run
+      .limit(200); // Limit per run
 
     if (fetchError)
       throw new Error(
@@ -977,31 +975,24 @@ async function generateFullPostsBatch() {
 
     // 2. Prepare requests
     const batchRequestsFullPost = [];
-    const paperPrepDataMap = new Map(); // Cache prep data for embedding/thumbnail use later
+    const paperPrepDataMap = new Map(); // Cache prep data for embedding/thumbnail
 
     for (const paper of papers) {
       const outline = paper.generatedOutline;
       if (!outline || outline.trim() === "") {
         logWithTimestamp(
-          `Skipping ${paper.id}: Outline from DB is missing or empty.`
+          `Skipping ${paper.id}: Outline from DB missing/empty.`
         );
         continue;
       }
-
       const prepData = await getPreparedDataForPaper(paper); // Re-prepare data
-      if (!prepData) {
+      if (!prepData || prepData.sections.length === 0) {
         logWithTimestamp(
-          `Skipping full post for ${paper.id} due to data preparation error.`
+          `Skipping full post for ${paper.id}: Data prep failed or no sections.`
         );
         continue;
       }
-      if (prepData.sections.length === 0) {
-        logWithTimestamp(
-          `Skipping full post for ${paper.id} as no sections could be extracted (HTML/OCR/Abstract).`
-        );
-        continue; // Skip if no content available
-      }
-      paperPrepDataMap.set(paper.id, prepData); // Store prep data
+      paperPrepDataMap.set(paper.id, prepData); // Store for later use
 
       const fullPostParams = prepareFullPostParams(
         paper,
@@ -1019,7 +1010,7 @@ async function generateFullPostsBatch() {
     }
 
     if (batchRequestsFullPost.length === 0) {
-      logWithTimestamp("No valid full post requests prepared after filtering.");
+      logWithTimestamp("No valid full post requests prepared.");
       return;
     }
 
@@ -1028,25 +1019,23 @@ async function generateFullPostsBatch() {
       batchRequestsFullPost,
       "Full Post Batch"
     );
-
-    // 4. Process Results & Update DB
     if (!fullPostBatchResult) {
       logWithTimestamp("Full Post batch submission or polling failed.");
-      return; // Stop if batch itself failed
+      return;
     }
 
+    // 4. Process Results & Update DB
     logWithTimestamp(
       `Processing Full Post results for Batch ID: ${fullPostBatchResult.id} (Status: ${fullPostBatchResult.processing_status})...`
     );
-    // Use streaming results processing
     try {
       for await (const result of await anthropic.messages.batches.results(
         fullPostBatchResult.id
       )) {
         resultsProcessedCount++;
         const paperId = result.custom_id;
-        const prepData = paperPrepDataMap.get(paperId); // Get cached prep data
-        const finalThumbnail = prepData?.thumbnail; // Use thumbnail from prep phase
+        const prepData = paperPrepDataMap.get(paperId);
+        const finalThumbnail = prepData?.thumbnail; // Use thumbnail determined during prep
 
         if (result.result.type === "succeeded") {
           const generatedSummary =
@@ -1058,15 +1047,15 @@ async function generateFullPostsBatch() {
             continue;
           }
 
-          // Update DB *before* embedding generation
+          // Update DB *before* embedding
           const { error: updateError } = await supabase
             .from("arxivPapersData")
             .update({
               generatedSummary: generatedSummary,
-              thumbnail: finalThumbnail, // Use prepped thumbnail
-              embedding: null, // Reset embedding - will be generated next
+              thumbnail: finalThumbnail,
+              embedding: null, // Reset
               lastUpdated: new Date().toISOString(),
-              enhancedSummaryCreatedAt: new Date().toISOString(), // Mark complete
+              enhancedSummaryCreatedAt: new Date().toISOString(),
             })
             .eq("id", paperId);
 
@@ -1074,14 +1063,13 @@ async function generateFullPostsBatch() {
             logWithTimestamp(
               `DB Update Error (Summary) ${paperId}: ${updateError.message}`
             );
-            // If DB update fails, should we still try embedding? Probably not.
             continue; // Skip embedding if save failed
           }
 
           successfulUpdateCount++;
-          logWithTimestamp(`Stored summary for ${paperId}.`);
+          // logWithTimestamp(`Stored summary for ${paperId}.`); // Reduce noise
 
-          // --- Generate Embedding ---
+          // Generate Embedding
           const embeddingResult = await createEmbeddingForPaper(
             paperId,
             generatedSummary
@@ -1091,52 +1079,47 @@ async function generateFullPostsBatch() {
           } else {
             embeddingFailCount++;
           }
-          await delay(500); // Pace embedding API calls slightly
+          await delay(300); // Pace embedding calls slightly
         } else {
           logWithTimestamp(
             `Full Post Failed ${paperId}: Type=${result.result.type}, Error=${
               result.result.error?.type || "N/A"
             }`
           );
-          // Optional: Clear outline fields in DB to allow full retry?
         }
-      }
-      logWithTimestamp(
-        `Finished processing ${resultsProcessedCount} full post results. ${successfulUpdateCount} summaries stored.`
-      );
-      if (embeddingFailCount > 0 || embeddingSuccessCount > 0) {
-        logWithTimestamp(
-          `Embedding results: ${embeddingSuccessCount} succeeded, ${embeddingFailCount} failed.`
-        );
       }
     } catch (resultsError) {
       logWithTimestamp(
-        `Error processing full post results stream for batch ${fullPostBatchResult.id}: ${resultsError.message}`
+        `Error processing full post results stream for ${fullPostBatchResult.id}: ${resultsError.message}`
       );
-      if (resultsError.response?.data) {
-        logWithTimestamp(
-          `Anthropic API Results Error Data: ${JSON.stringify(
-            resultsError.response.data
-          )}`
-        );
-      }
+    }
+    logWithTimestamp(
+      `Processed ${resultsProcessedCount} full post results. ${successfulUpdateCount} summaries stored.`
+    );
+    if (embeddingSuccessCount > 0 || embeddingFailCount > 0) {
+      logWithTimestamp(
+        `Embedding results: ${embeddingSuccessCount} succeeded, ${embeddingFailCount} failed.`
+      );
     }
   } catch (error) {
     logWithTimestamp(`Error in generateFullPostsBatch phase: ${error.message}`);
+    console.error(error); // Log stack trace
   } finally {
-    logWithTimestamp("=== FULL POST Generation Phase Complete ===");
+    const duration = (Date.now() - phaseStartTime) / 1000;
+    logWithTimestamp(
+      `=== FULL POST Generation Phase Complete (${duration.toFixed(1)}s) ===`
+    );
   }
 }
 
 // --- Main Execution Function ---
-// This runs the two phases back-to-back when the script is invoked
 async function mainBatchProcess() {
   logWithTimestamp("Starting main batch processing cycle...");
   const startTime = Date.now();
   try {
     await generateOutlinesBatch();
     logWithTimestamp("Brief delay between outline and full post phases...");
-    await delay(5000); // 5 second delay
+    await delay(5000); // 5 second delay (adjust if needed)
     await generateFullPostsBatch();
   } catch (error) {
     logWithTimestamp(`Unhandled error in mainBatchProcess: ${error.message}`);
@@ -1150,22 +1133,26 @@ async function mainBatchProcess() {
   }
 }
 
-// --- Script Entry Point ---
-// Ensures the main process runs when executed directly with 'node'
-if (require.main === module) {
+// --- Script Entry Point (ESM Compatible) ---
+// Get the current module's filename
+const __filename = fileURLToPath(import.meta.url);
+
+// Check if the executed script path matches this module's path
+if (resolve(process.argv[1]) === __filename) {
   logWithTimestamp(
     "Executing generate-enhanced-summary-batch script directly."
   );
   mainBatchProcess().catch((err) => {
     logWithTimestamp(`Fatal error during script execution: ${err.message}`);
     console.error(err);
-    process.exit(1);
+    process.exit(1); // Ensure script exits with error code on failure
   });
 } else {
-  // This allows functions to be potentially imported elsewhere, though not typical for a worker script
+  // This block is less likely to be hit if you only run via node/spawn
   logWithTimestamp(
-    "generate-enhanced-summary-batch script loaded as a module."
+    "generate-enhanced-summary-batch script loaded as a module (unexpected)."
   );
-  // module.exports = { generateOutlinesBatch, generateFullPostsBatch }; // Optional export
+  // Export functions if needed for programmatic use (optional)
+  // export { generateOutlinesBatch, generateFullPostsBatch, mainBatchProcess };
 }
 // --- END OF FILE ---
