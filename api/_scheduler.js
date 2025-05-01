@@ -66,7 +66,7 @@ cron.schedule("05 06 * * *", async () => {
     await runScript("api/arxiv/update-twitter-score.js");
     // New: update Hugging Face score script
     await runScript("api/arxiv/update-huggingFace-score.js");
-    await runScript("api/arxiv/generate-summary.js");
+    await runScript("api/arxiv/generate-simple-summary.js");
     await runScript("api/arxiv/revalidate-papers.js"); // First revalidation for general summaries
 
     // -----------------------------------------------
@@ -74,7 +74,7 @@ cron.schedule("05 06 * * *", async () => {
     // -----------------------------------------------
     await runScript("api/arxiv/fetch-paper-graphics.js");
     await runScript("api/arxiv/fetch-paper-tables.js");
-    await runScript("api/arxiv/generate-summary-ocr.js");
+    await runScript("api/arxiv/generate-enhanced-summary-claude-legacy.js");
 
     await runScript("api/arxiv/publish-to-devto.js");
     // await runScript("api/arxiv/publish-to-hashnode.js"); -- Not doing this for now
