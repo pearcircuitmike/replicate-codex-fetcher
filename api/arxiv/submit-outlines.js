@@ -1,6 +1,6 @@
 // File: api/arxiv/submit-outlines.js
-// Purpose: Finds papers needing outlines, submits an Anthropic batch job for them,
-//          and records the batch job ID to the 'batch_jobs' table.
+// Purpose: Finds papers needing outlines, prepares AGGRESSIVELY SANITIZED data, submits batch job,
+//          and records the batch job ID to the 'batch_jobs' table. Includes debug logging.
 // To be run periodically (e.g., daily) by a scheduler like cron.
 
 import { createClient } from "@supabase/supabase-js";
@@ -16,7 +16,8 @@ dotenv.config();
 // --- Configuration ---
 const BATCH_JOBS_TABLE = "batch_jobs";
 const PAPERS_TABLE = "arxivPapersData";
-const SUBMIT_BATCH_SIZE_LIMIT = 200;
+// *** SET TO 1 FOR DEBUGGING THE 400 ERROR, SET BACK TO ~200 FOR PRODUCTION ***
+const SUBMIT_BATCH_SIZE_LIMIT = 200; // Or 200 for production
 
 // --- Initializations ---
 const logWithTimestamp = (message) => {
@@ -24,46 +25,63 @@ const logWithTimestamp = (message) => {
   console.log(`[SubmitOutlines ${timestamp}] ${message}`);
 };
 
-// Initialize Clients (Error handling included for robustness)
+// Initialize Clients
 let supabase, anthropic, mistralClient, openai;
 try {
   logWithTimestamp("Initializing clients...");
-  const supabaseUrl = process.env.SUPABASE_URL;
-  const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
-  if (!supabaseUrl || !supabaseKey)
-    throw new Error("Supabase URL or Key missing.");
-  supabase = createClient(supabaseUrl, supabaseKey);
-
-  const claudeApiKey = process.env.ANTHROPIC_PAPERS_GENERATE_SUMMARY_API_KEY;
-  if (!claudeApiKey) throw new Error("Anthropic API Key missing.");
-  anthropic = new Anthropic({ apiKey: claudeApiKey });
-
-  const mistralApiKey = process.env.MISTRAL_API_KEY;
-  mistralClient = mistralApiKey ? new Mistral({ apiKey: mistralApiKey }) : null;
-
-  const openaiApiKey = process.env.OPENAI_SECRET_KEY;
-  openai = openaiApiKey ? new OpenAI({ apiKey: openaiApiKey }) : null;
-
+  supabase = createClient(
+    process.env.SUPABASE_URL,
+    process.env.SUPABASE_SERVICE_KEY
+  );
+  anthropic = new Anthropic({
+    apiKey: process.env.ANTHROPIC_PAPERS_GENERATE_SUMMARY_API_KEY,
+  });
+  mistralClient = process.env.MISTRAL_API_KEY
+    ? new Mistral({ apiKey: process.env.MISTRAL_API_KEY })
+    : null;
+  openai = process.env.OPENAI_SECRET_KEY
+    ? new OpenAI({ apiKey: process.env.OPENAI_SECRET_KEY })
+    : null;
   logWithTimestamp(
     `Clients Initialized - Supabase: OK, Anthropic: OK, Mistral: ${
       mistralClient ? "OK" : "N/A"
     }, OpenAI: ${openai ? "OK" : "N/A"}`
   );
+  // Add checks for mandatory clients
+  if (!supabase || !anthropic)
+    throw new Error("Supabase or Anthropic client failed to initialize.");
 } catch (error) {
   logWithTimestamp(`ERROR initializing clients: ${error.message}`);
   process.exit(1);
 }
 
-// --- Helper Functions (Copied/Adapted - Potential for Shared Utils Later) ---
-// Includes: delay, fetchPaperHtml, extractSectionsFromHtml, extractFirstImage,
-//           processWithMistralOCR, extractSectionsFromOCR, formatTablesForBlogPost,
-//           findRelatedPaperSlugs, getPreparedDataForPaper, prepareOutlineParams,
-//           submitBatchAndRecord
-// NOTE: Only helpers needed for *outline submission* are strictly required here.
+// --- Helper Functions ---
+
+/**
+ * Sanitizes a string AGGRESSIVELY to remove potentially problematic characters,
+ * keeping only basic printable ASCII (space to ~) and essential whitespace (\n, \r, \t).
+ * Replaces others with '[?]'. USE WITH CAUTION - MAY REMOVE VALID CHARACTERS.
+ * @param {string | null | undefined} str The string to sanitize.
+ * @returns {string} The sanitized string.
+ */
+function sanitizeString(str) {
+  if (str === null || str === undefined) return "";
+  if (typeof str !== "string") str = String(str);
+
+  // Keep only space through tilde (standard printable ASCII), plus newline, carriage return, tab
+  const aggressiveAsciiRegex = /[^\x20-\x7E\n\r\t]/g;
+  const sanitized = str.replace(aggressiveAsciiRegex, "[?]");
+  // Optional: Log if characters were replaced
+  // if (sanitized !== str) {
+  //    logWithTimestamp(`DEBUG: Sanitized string (original length ${str.length}, new ${sanitized.length})`);
+  // }
+  return sanitized;
+}
 
 async function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
+
 async function fetchPaperHtml(arxivId) {
   const htmlUrl = `https://arxiv.org/html/${arxivId}`;
   try {
@@ -78,8 +96,11 @@ async function fetchPaperHtml(arxivId) {
     return { html: null, url: null };
   }
 }
+
 function extractSectionsFromHtml(htmlContent) {
+  // Extracts sections from arXiv HTML using robust selectors and SANITIZES text.
   if (!htmlContent) return [];
+  logWithTimestamp("Extracting & sanitizing sections from HTML content...");
   try {
     const dom = new JSDOM(htmlContent);
     const document = dom.window.document;
@@ -90,15 +111,15 @@ function extractSectionsFromHtml(htmlContent) {
     if (sectionHeaders.length > 0) {
       for (let i = 0; i < sectionHeaders.length; i++) {
         const header = sectionHeaders[i];
-        const title = header.textContent?.trim();
+        let rawTitle = header.textContent?.trim() || "";
         if (
-          !title ||
-          title.length > 100 ||
-          title.toLowerCase() === "references" ||
-          title.toLowerCase() === "bibliography"
+          !rawTitle ||
+          rawTitle.length > 100 ||
+          rawTitle.toLowerCase() === "references" ||
+          rawTitle.toLowerCase() === "bibliography"
         )
           continue;
-        let content = "";
+        let rawContent = "";
         let currentNode = header.nextElementSibling;
         while (
           currentNode &&
@@ -119,14 +140,16 @@ function extractSectionsFromHtml(htmlContent) {
             .toLowerCase()
             .startsWith("acknowledgements")
         ) {
-          content += (currentNode.textContent || "").trim() + "\n";
+          rawContent += (currentNode.textContent || "").trim() + "\n";
           currentNode = currentNode.nextElementSibling;
           if (!currentNode) break;
         }
-        content = content
+        rawContent = rawContent
           .replace(/\s{2,}/g, " ")
           .replace(/\n+/g, "\n")
           .trim();
+        const title = sanitizeString(rawTitle);
+        const content = sanitizeString(rawContent);
         if (content) sections.push({ title, content });
       }
     }
@@ -135,18 +158,21 @@ function extractSectionsFromHtml(htmlContent) {
       for (const div of divs) {
         const titleElement = div.querySelector(".ltx_title, h1, h2, h3");
         if (titleElement) {
-          const title = titleElement.textContent?.trim();
+          const rawTitle = titleElement.textContent?.trim() || "";
           if (
-            title &&
-            title.length < 100 &&
-            title.toLowerCase() !== "references" &&
-            title.toLowerCase() !== "bibliography"
+            rawTitle &&
+            rawTitle.length < 100 &&
+            rawTitle.toLowerCase() !== "references" &&
+            rawTitle.toLowerCase() !== "bibliography"
           ) {
-            let content = div.textContent?.replace(title, "").trim() || "";
-            content = content
+            let rawContent =
+              div.textContent?.replace(rawTitle, "").trim() || "";
+            rawContent = rawContent
               .replace(/\s{2,}/g, " ")
               .replace(/\n+/g, "\n")
               .trim();
+            const title = sanitizeString(rawTitle);
+            const content = sanitizeString(rawContent);
             if (content) sections.push({ title, content });
           }
         }
@@ -157,21 +183,27 @@ function extractSectionsFromHtml(htmlContent) {
         ".abstract, .ltx_abstract, #abstract"
       );
       if (abstractNode && abstractNode.textContent) {
-        const abstractText = abstractNode.textContent
+        const rawAbstractText = abstractNode.textContent
           .replace(/^Abstract\s*/i, "")
           .trim();
-        if (abstractText) {
-          sections.push({ title: "Abstract", content: abstractText });
+        const content = sanitizeString(rawAbstractText);
+        if (content) {
+          sections.push({ title: "Abstract", content: content });
         }
       }
     }
+    logWithTimestamp(
+      `Finished HTML extraction. Found ${sections.length} sanitized sections.`
+    );
     return sections.filter((s) => s.content);
   } catch (parseError) {
     logWithTimestamp(`Error parsing HTML: ${parseError.message}`);
     return [];
   }
 }
+
 function extractFirstImage(htmlContent, htmlUrl) {
+  // Extracts image URL - assumed safe
   if (!htmlContent || !htmlUrl) return null;
   try {
     const dom = new JSDOM(htmlContent);
@@ -215,7 +247,9 @@ function extractFirstImage(htmlContent, htmlUrl) {
   }
   return null;
 }
+
 async function processWithMistralOCR(documentUrl) {
+  // Calls Mistral OCR if needed. Result sanitized in extractSectionsFromOCR.
   if (!mistralClient) {
     logWithTimestamp("Skipping OCR: Mistral client not initialized.");
     return null;
@@ -238,18 +272,21 @@ async function processWithMistralOCR(documentUrl) {
     return null;
   }
 }
+
 function extractSectionsFromOCR(ocrResult) {
+  // Extracts sections from OCR result and SANITIZES text.
   if (!ocrResult || !ocrResult.pages || ocrResult.pages.length === 0) {
     logWithTimestamp("OCR result is empty or invalid.");
     return [];
   }
-  logWithTimestamp("Extracting sections from OCR...");
+  logWithTimestamp("Extracting & sanitizing sections from OCR...");
   try {
     const sections = [];
-    let currentSection = { title: "Unknown Section", content: "" };
+    let currentRawContent = "";
+    let currentRawTitle = "Unknown Section";
     let titleFound = false;
     const sectionPatterns = [
-      /^(?:[IVXLCDM\d\.]+\s+)?introduction/i,
+      /* ... keep patterns ... */ /^(?:[IVXLCDM\d\.]+\s+)?introduction/i,
       /^(?:[IVXLCDM\d\.]+\s+)?background/i,
       /^(?:[IVXLCDM\d\.]+\s+)?related\s+work/i,
       /^(?:[IVXLCDM\d\.]+\s+)?(?:methodology|methods?|approach)/i,
@@ -291,47 +328,43 @@ function extractSectionsFromOCR(ocrResult) {
           }
         }
         if (isStopSection) {
-          logWithTimestamp(
-            `Detected stop section: "${trimmedLine}". Finishing extraction.`
-          );
-          if (currentSection.content.trim()) {
+          if (currentRawContent.trim()) {
             const finalTitle = titleFound
-              ? currentSection.title
+              ? currentRawTitle
               : "Preamble / Abstract";
             sections.push({
-              title: finalTitle,
-              content: currentSection.content.trim(),
+              title: sanitizeString(finalTitle),
+              content: sanitizeString(currentRawContent.trim()),
             });
           }
-          currentSection = { title: "Stopped", content: "" };
+          currentRawTitle = "Stopped";
+          currentRawContent = "";
           break;
         }
         if (isSectionHeader) {
-          if (currentSection.content.trim()) {
+          if (currentRawContent.trim()) {
             const titleToUse = titleFound
-              ? currentSection.title
+              ? currentRawTitle
               : "Preamble / Abstract";
             sections.push({
-              title: titleToUse,
-              content: currentSection.content.trim(),
+              title: sanitizeString(titleToUse),
+              content: sanitizeString(currentRawContent.trim()),
             });
           }
-          currentSection.title = trimmedLine;
-          currentSection.content = "";
+          currentRawTitle = trimmedLine;
+          currentRawContent = "";
           titleFound = true;
         } else {
-          currentSection.content += line + "\n";
+          currentRawContent += line + "\n";
         }
       }
-      if (currentSection.title === "Stopped") break;
+      if (currentRawTitle === "Stopped") break;
     }
-    if (currentSection.title !== "Stopped" && currentSection.content.trim()) {
-      const finalTitle = titleFound
-        ? currentSection.title
-        : "Preamble / Abstract";
+    if (currentRawTitle !== "Stopped" && currentRawContent.trim()) {
+      const finalTitle = titleFound ? currentRawTitle : "Preamble / Abstract";
       sections.push({
-        title: finalTitle,
-        content: currentSection.content.trim(),
+        title: sanitizeString(finalTitle),
+        content: sanitizeString(currentRawContent.trim()),
       });
     }
     sections.forEach((section) => {
@@ -340,24 +373,30 @@ function extractSectionsFromOCR(ocrResult) {
         .replace(/\n+/g, "\n")
         .trim();
     });
-    logWithTimestamp(`Found ${sections.length} sections via OCR.`);
+    logWithTimestamp(
+      `Finished OCR extraction. Found ${sections.length} sanitized sections.`
+    );
     return sections.filter((s) => s.content);
   } catch (e) {
     logWithTimestamp(`Error extracting sections from OCR: ${e.message}`);
     return [];
   }
 }
+
 function formatTablesForBlogPost(paperTables) {
+  // Formats table data and SANITIZES captions.
   if (!paperTables || !Array.isArray(paperTables)) return [];
+  logWithTimestamp(`Formatting and sanitizing ${paperTables.length} tables...`);
   try {
     return paperTables
       .map((table, index) => {
         if (!table || typeof table !== "object") return null;
         const markdown = (table.tableMarkdown || "").trim();
         if (!markdown) return null;
+        const caption = sanitizeString(table.caption || `Table ${index + 1}`);
         return {
           tableId: table.identifier || `Table-${index + 1}`,
-          caption: table.caption || `Table ${index + 1}`,
+          caption: caption,
           markdown: markdown,
           pageNumber: table.pageNumber || null,
         };
@@ -368,7 +407,9 @@ function formatTablesForBlogPost(paperTables) {
     return [];
   }
 }
+
 async function findRelatedPaperSlugs(paperId) {
+  // Finds related papers and SANITIZES their titles. Requires OpenAI client.
   if (!supabase || !openai) {
     logWithTimestamp(
       `Skipping related slugs for ${paperId}: Supabase or OpenAI client missing.`
@@ -411,7 +452,7 @@ async function findRelatedPaperSlugs(paperId) {
     const slugs = (relatedPapers || [])
       .map((p) => ({
         slug: p.slug,
-        title: p.title,
+        title: sanitizeString(p.title),
         platform: p.platform || "arxiv",
         id: p.id,
       }))
@@ -427,7 +468,9 @@ async function findRelatedPaperSlugs(paperId) {
     return [];
   }
 }
+
 async function getPreparedDataForPaper(paper) {
+  // Orchestrates data fetching and preparation, ensuring results are SANITIZED.
   if (!paper || !paper.arxivId || !paper.id) {
     logWithTimestamp(
       "Error: Invalid paper object passed to getPreparedDataForPaper."
@@ -457,15 +500,21 @@ async function getPreparedDataForPaper(paper) {
     }
     if (sections.length === 0 && paper.abstract) {
       const abstractText = paper.abstract.replace(/^Abstract\s*/i, "").trim();
-      if (abstractText) {
-        sections = [{ title: "Abstract", content: abstractText }];
+      const sanitizedAbstract = sanitizeString(abstractText);
+      if (sanitizedAbstract) {
+        sections = [{ title: "Abstract", content: sanitizedAbstract }];
       }
     } else if (sections.length === 0) {
       logWithTimestamp(
         `Warning: No content sections could be found for paper ${paper.id}.`
       );
     }
-    const figures = paper.paperGraphics || [];
+    const figures =
+      paper.paperGraphics?.map((f) => ({
+        ...f,
+        caption: sanitizeString(f.caption),
+        originalCaption: sanitizeString(f.originalCaption),
+      })) || [];
     const tables = formatTablesForBlogPost(paper.paperTables || []);
     const relatedPapers =
       openai && paper.embedding ? await findRelatedPaperSlugs(paper.id) : [];
@@ -489,6 +538,7 @@ async function getPreparedDataForPaper(paper) {
   }
 }
 
+// --- Batch Parameter Preparation ---
 function prepareOutlineParams(
   paperData,
   sections,
@@ -496,12 +546,23 @@ function prepareOutlineParams(
   tables,
   relatedPapers
 ) {
-  const model = "claude-3-7-sonnet-20250219"; // Correct model
+  // Prepares the request parameters for the outline generation batch request.
+  // Uses sanitized data from getPreparedDataForPaper and sanitizes direct inputs.
+  const model = "claude-3-7-sonnet-20250219";
   logWithTimestamp(
     `Preparing outline params for paper ${paperData.id} using model ${model}`
   );
-  const { title, abstract, authors, arxivId, arxivCategories } = paperData;
-  // Full original prompt logic:
+
+  // Sanitize fields coming directly from paperData
+  const sanitizedTitle = sanitizeString(paperData.title);
+  const sanitizedAbstract = sanitizeString(paperData.abstract);
+  const sanitizedAuthors = paperData.authors?.map(sanitizeString) || [];
+  const authorsString = sanitizedAuthors.join(", ");
+  const categoriesString = Array.isArray(paperData.arxivCategories)
+    ? paperData.arxivCategories.join(", ")
+    : paperData.arxivCategories || "";
+
+  // These inputs were sanitized by helpers called in getPreparedDataForPaper
   const sectionsString = sections
     .map(
       (s) =>
@@ -527,19 +588,15 @@ function prepareOutlineParams(
         `Table ID: ${t.tableId}\nCaption: ${t.caption}\nMarkdown:\n${t.markdown}`
     )
     .join("\n\n");
-  const categoriesString = Array.isArray(arxivCategories)
-    ? arxivCategories.join(", ")
-    : arxivCategories || "";
-  const authorsString = Array.isArray(authors)
-    ? authors.join(", ")
-    : authors || "";
+
+  // Use full original prompt strings with sanitized inputs
   const system_prompt_outline = `You are an expert at creating outlines for technical blog posts. You analyze research papers and create detailed outlines that follow the paper's structure while making the content accessible to a semi-technical audience. `;
   const user_message_content_outline = `Create a detailed outline for a blog post based on this research paper. The outline should follow the paper's original structure and sections and MUST BE 100% FACTUAL.\nTitle: ${
-    title || "N/A"
-  }\nArXiv ID: ${arxivId || "N/A"}\nAuthors: ${
+    sanitizedTitle || "N/A"
+  }\nArXiv ID: ${paperData.arxivId || "N/A"}\nAuthors: ${
     authorsString || "N/A"
   }\nCategories: ${categoriesString || "N/A"}\nAbstract:\n${
-    abstract || "N/A"
+    sanitizedAbstract || "N/A"
   }\nPaper Sections:\n${
     sectionsString || "N/A"
   }\nAvailable Figures (do not use figures if empty brackets):\n${
@@ -549,6 +606,7 @@ function prepareOutlineParams(
   }\nI need an outline that:\n1. Follows the SAME STRUCTURE as the original paper (same h2 headings)\n2. Specifies where to include each available figure and table\n3. Indicates where to add internal links to related papers: ${
     linksString || "None"
   }\n4. Incorporates the key ideas and explains why you should care about the research/its context/problem to be solved\nFormat your outline with these exact sections:\n- STRUCTURE: List all the section headings in order\n- KEY IDEAS: 5-7 key takeways or insights summarizing the paper. Use exact quotations from the paper to support them.\n- DETAILED OUTLINE: Draft a narrative blog post summary outline taking readers through the research sections, include:\n  * Brief description of what to summarize, using precise language from the paper that is fully accurate.\n  * Which figures/tables to include and where (only include these if they add value). List the captions as well.\n  * Where to add links to related papers (they must be in the sections, not in a related research block at the end)\nThe outline will be used to generate a blog post for aimodels.fyi to take readers through the paper and researcb. Retitle the summary sections to have concise blog post headings that are more descriptive of what is in the sections than the research paper.`;
+
   return {
     model: model,
     max_tokens: 4000,
@@ -557,14 +615,15 @@ function prepareOutlineParams(
   };
 }
 
-// Note: prepareFullPostParams is NOT needed in *this* script, only in the submit-summaries script.
+// Note: prepareFullPostParams is NOT needed in this script.
 
-// Helper function to submit a batch and record its ID to the DB
+// --- Helper function to submit a batch and record its ID to the DB ---
 async function submitBatchAndRecord(
   batchRequests,
   batchDescription = "Batch",
   batchType = "unknown"
 ) {
+  // Submits batch (data presumed sanitized), gets ID, records to BATCH_JOBS_TABLE, returns ID or null.
   if (!batchRequests || batchRequests.length === 0) {
     logWithTimestamp(`No requests provided for ${batchDescription}.`);
     return null;
@@ -602,7 +661,7 @@ async function submitBatchAndRecord(
           (batchJob.request_counts?.canceled || 0),
         metadata: { paper_ids: batchRequests.map((r) => r.custom_id) },
       })
-      .select()
+      .select("id")
       .single();
     if (insertError) {
       logWithTimestamp(
@@ -646,10 +705,9 @@ async function submitOutlinesBatchOnly() {
       .select(
         "id, title, abstract, authors, arxivId, arxivCategories, paperGraphics, paperTables, thumbnail, pdfUrl, embedding"
       )
-      .is("outlineGeneratedAt", null) // Check if outline has been successfully processed
-      // TODO: Add check to ensure an 'outline' type job isn't already 'submitted' or 'polling' in batch_jobs for this paper ID
+      .is("outlineGeneratedAt", null)
       .order("indexedDate", { ascending: false })
-      .limit(SUBMIT_BATCH_SIZE_LIMIT);
+      .limit(SUBMIT_BATCH_SIZE_LIMIT); // Use limit variable
 
     if (fetchError)
       throw new Error(
@@ -665,6 +723,7 @@ async function submitOutlinesBatchOnly() {
 
     const batchRequests = [];
     for (const paper of papers) {
+      // getPreparedDataForPaper now returns sanitized data
       const prepData = await getPreparedDataForPaper(paper);
       await delay(50);
       if (!prepData) {
@@ -674,7 +733,8 @@ async function submitOutlinesBatchOnly() {
         skippedCount++;
         continue;
       }
-      // Prepare params using the function specific to outlines
+
+      // Prepare params
       const params = prepareOutlineParams(
         paper,
         prepData.sections,
@@ -682,12 +742,37 @@ async function submitOutlinesBatchOnly() {
         prepData.tables,
         prepData.relatedPapers
       );
+
+      // *** DEBUG LOGGING (As requested) ***
+      logWithTimestamp(
+        `DEBUG: PREPARING TO PUSH request for Paper ID: ${paper.id}`
+      );
+      try {
+        const messageContentSample =
+          params.messages[0]?.content?.substring(0, 500) || "N/A";
+        console.log(
+          `DEBUG Content Preview (First 500 chars):\n${messageContentSample}` +
+            (params.messages[0]?.content?.length > 500 ? "\n..." : "")
+        );
+        // Attempt to stringify individually to catch errors earlier (optional)
+        // JSON.stringify({ custom_id: paper.id.toString(), params: params });
+        // logWithTimestamp(`DEBUG: Stringify check OK for Paper ID: ${paper.id}`);
+      } catch (debugError) {
+        logWithTimestamp(
+          `DEBUG: ERROR during pre-push check for Paper ID: ${paper.id} - ${debugError.message}`
+        );
+        // Decide whether to skip this paper or let the main submission fail
+        skippedCount++;
+        continue; // Skip this paper if pre-check fails
+      }
+      // *** END DEBUG LOGGING ***
+
       batchRequests.push({ custom_id: paper.id.toString(), params: params });
     }
 
     if (batchRequests.length === 0) {
       logWithTimestamp(
-        "No valid outline requests prepared after filtering/prep."
+        "No valid outline requests prepared after filtering/prep/debug."
       );
       return;
     }
@@ -710,7 +795,6 @@ async function submitOutlinesBatchOnly() {
     console.error(error);
     throw error;
   } finally {
-    // Re-throw to be caught by main handler
     const duration = (Date.now() - phaseStartTime) / 1000;
     logWithTimestamp(
       `=== OUTLINE Batch Submission Phase Complete (${duration.toFixed(

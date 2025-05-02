@@ -1,22 +1,19 @@
-// File: utils/poll-and-process-batches.js
-// Purpose: Polls Anthropic for status of pending batch jobs recorded in the 'batch_jobs' table.
-//          Retrieves results for completed jobs, updates 'arxivPapersData', creates embeddings,
-//          and updates the 'batch_jobs' table status.
-// To be run frequently (e.g., every 10-15 minutes) via cron/pm2/systemd timer.
+// File: utils/poll-and-process-batches.js (Corrected)
+// Purpose: Polls Anthropic batch jobs, processes results, updates DBs.
+// Runs frequently via scheduler.
 
 import { createClient } from "@supabase/supabase-js";
 import dotenv from "dotenv";
 import Anthropic from "@anthropic-ai/sdk";
-import OpenAI from "openai"; // Needed for embeddings
+import OpenAI from "openai";
 
 dotenv.config();
 
 // --- Configuration ---
 const BATCH_JOBS_TABLE = "batch_jobs";
 const PAPERS_TABLE = "arxivPapersData";
-const POLL_LIMIT = 50; // Max batches to check per run
-const POLLING_INTERVAL_MS = 15 * 60 * 1000; // How often this script *should* be run (e.g., 15 minutes)
-const LOCK_TIMEOUT_MS = 10 * 60 * 1000; // Prevent overlap if a run takes > 10 mins
+const POLL_LIMIT = 50;
+const POLLING_INTERVAL_MS = 15 * 60 * 1000; // 15 minutes
 
 // --- Initializations ---
 const logWithTimestamp = (message) => {
@@ -24,34 +21,31 @@ const logWithTimestamp = (message) => {
   console.log(`[PollProcessBatch ${timestamp}] ${message}`);
 };
 
-// Initialize Clients (Add error handling as before)
 let supabase, anthropic, openai;
 try {
   logWithTimestamp("Initializing clients...");
-  const supabaseUrl = process.env.SUPABASE_URL;
-  const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
-  if (!supabaseUrl || !supabaseKey)
-    throw new Error("Supabase URL or Key missing.");
-  supabase = createClient(supabaseUrl, supabaseKey);
-
-  const claudeApiKey = process.env.ANTHROPIC_PAPERS_GENERATE_SUMMARY_API_KEY;
-  if (!claudeApiKey) throw new Error("Anthropic API Key missing.");
-  anthropic = new Anthropic({ apiKey: claudeApiKey });
-
-  const openaiApiKey = process.env.OPENAI_SECRET_KEY;
-  if (!openaiApiKey)
+  supabase = createClient(
+    process.env.SUPABASE_URL,
+    process.env.SUPABASE_SERVICE_KEY
+  );
+  anthropic = new Anthropic({
+    apiKey: process.env.ANTHROPIC_PAPERS_GENERATE_SUMMARY_API_KEY,
+  });
+  if (!process.env.OPENAI_SECRET_KEY)
     logWithTimestamp(
       "Warning: OpenAI Secret Key missing. Embeddings disabled."
     );
-  openai = openaiApiKey ? new OpenAI({ apiKey: openaiApiKey }) : null;
-
+  openai = process.env.OPENAI_SECRET_KEY
+    ? new OpenAI({ apiKey: process.env.OPENAI_SECRET_KEY })
+    : null;
+  if (!supabase || !anthropic)
+    throw new Error("Supabase or Anthropic client failed to initialize.");
   logWithTimestamp("Clients Initialized.");
 } catch (error) {
   logWithTimestamp(`ERROR initializing clients: ${error.message}`);
   process.exit(1);
 }
 
-// Simple in-memory lock to prevent overlap if run too frequently
 let isRunning = false;
 
 // --- Helper Functions ---
@@ -59,8 +53,8 @@ async function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// Function to create embeddings - Copied/adapted from original script
 async function createEmbeddingForPaper(paperId, generatedSummary) {
+  // Expects paperId to be the correct type (string UUID in this case)
   if (!openai) {
     logWithTimestamp(`Skipping embedding ${paperId}: OpenAI client missing.`);
     return null;
@@ -73,7 +67,7 @@ async function createEmbeddingForPaper(paperId, generatedSummary) {
         "id, title, arxivCategories, abstract, authors, lastUpdated, arxivId"
       )
       .eq("id", paperId)
-      .single();
+      .single(); // Use paperId directly
     if (fetchError)
       throw new Error(
         `DB error fetching paper data for embedding (ID: ${paperId}): ${fetchError.message}`
@@ -105,7 +99,7 @@ async function createEmbeddingForPaper(paperId, generatedSummary) {
     const { error: updateError } = await supabase
       .from(PAPERS_TABLE)
       .update({ embedding: embedding, lastUpdated: new Date().toISOString() })
-      .eq("id", paperData.id);
+      .eq("id", paperData.id); // Use paperData.id (which is correct type)
     if (updateError)
       throw new Error(
         `DB error updating embedding for ${paperId}: ${updateError.message}`
@@ -121,21 +115,20 @@ async function createEmbeddingForPaper(paperId, generatedSummary) {
   }
 }
 
-// Function to process results for a completed batch
 async function processBatchResults(batchJob) {
   logWithTimestamp(
     `Starting result processing for Batch ID: ${batchJob.batch_id} (Type: ${batchJob.batch_type})`
   );
   let batchSuccessCount = 0;
   let batchErrorCount = 0;
-  let overallProcessingStatus = "processed"; // Assume success initially
+  let overallProcessingStatus = "processed";
   let finalErrorMessage = null;
 
   try {
     for await (const result of await anthropic.messages.batches.results(
       batchJob.batch_id
     )) {
-      const paperIdStr = result.custom_id;
+      const paperIdStr = result.custom_id; // Keep as string (UUID)
       if (!paperIdStr) {
         logWithTimestamp(
           `WARN: Result missing custom_id in batch ${batchJob.batch_id}. Skipping.`
@@ -144,18 +137,18 @@ async function processBatchResults(batchJob) {
         overallProcessingStatus = "processed_with_errors";
         continue;
       }
-      const paperId = parseInt(paperIdStr, 10); // Assuming paper ID is integer
+      // *** REMOVED parseInt - Use paperIdStr directly where needed for DB queries ***
+      // const paperId = parseInt(paperIdStr, 10); // REMOVED
 
       try {
-        // Add try/catch around individual result processing
         if (result.result.type === "succeeded") {
           const textContent = result.result.message?.content?.[0]?.text?.trim();
           if (!textContent) {
             logWithTimestamp(
-              `WARN: Empty content for succeeded paper ${paperId} in batch ${batchJob.batch_id}. Marking as error.`
+              `WARN: Empty content for succeeded paper ${paperIdStr} in batch ${batchJob.batch_id}. Marking as error.`
             );
             batchErrorCount++;
-            // Optionally mark paper as failed
+            overallProcessingStatus = "processed_with_errors";
             continue;
           }
 
@@ -167,48 +160,50 @@ async function processBatchResults(batchJob) {
               generatedOutline: textContent,
               outlineGeneratedAt: new Date().toISOString(),
             };
-            logWithTimestamp(`Processed outline for paper ${paperId}.`);
+            logWithTimestamp(`Processed outline for paper ${paperIdStr}.`);
           } else if (batchJob.batch_type === "summary") {
             updatePayload = {
               generatedSummary: textContent,
               enhancedSummaryCreatedAt: new Date().toISOString(),
               embedding: null,
             };
+            // Call embedding function with the correct UUID string ID
             const embedding = await createEmbeddingForPaper(
-              paperId,
+              paperIdStr,
               textContent
             );
             if (!embedding) {
               logWithTimestamp(
-                `WARN: Processed summary but FAILED to generate embedding for paper ${paperId}.`
+                `WARN: Processed summary but FAILED to generate embedding for paper ${paperIdStr}.`
               );
               embeddingSuccess = false;
-              overallProcessingStatus = "processed_with_errors"; // Mark batch if any embedding fails
+              overallProcessingStatus = "processed_with_errors";
             } else {
               logWithTimestamp(
-                `Processed summary and generated embedding for paper ${paperId}.`
+                `Processed summary and generated embedding for paper ${paperIdStr}.`
               );
             }
           } else {
             logWithTimestamp(
-              `WARN: Unknown batch_type '${batchJob.batch_type}' for paper ${paperId} in batch ${batchJob.batch_id}.`
+              `WARN: Unknown batch_type '${batchJob.batch_type}' for paper ${paperIdStr} in batch ${batchJob.batch_id}.`
             );
             batchErrorCount++;
             continue;
           }
 
-          // Update the main paper table
+          // Update the main paper table using the string UUID
           const { error: paperUpdateError } = await supabase
             .from(PAPERS_TABLE)
             .update({ ...updatePayload, lastUpdated: new Date().toISOString() })
-            .eq("id", paperId);
+            .eq("id", paperIdStr); // *** Use paperIdStr (UUID) here ***
 
           if (paperUpdateError) {
+            // Log the specific UUID causing the error if possible
             logWithTimestamp(
-              `ERROR updating paper ${paperId} result from batch ${batchJob.batch_id}: ${paperUpdateError.message}`
+              `ERROR updating paper ${paperIdStr} result from batch ${batchJob.batch_id}: ${paperUpdateError.message}`
             );
             batchErrorCount++;
-            overallProcessingStatus = "processed_with_errors"; // Don't fail entire batch for one paper update usually
+            overallProcessingStatus = "processed_with_errors";
           } else {
             if (embeddingSuccess) batchSuccessCount++;
             else batchErrorCount++;
@@ -216,7 +211,7 @@ async function processBatchResults(batchJob) {
         } else {
           // Handle failed result for this paper
           logWithTimestamp(
-            `Result failed for paper ${paperId} in batch ${
+            `Result failed for paper ${paperIdStr} in batch ${
               batchJob.batch_id
             }. Type: ${result.result.type}, Error: ${
               result.result.error?.type || "N/A"
@@ -224,11 +219,11 @@ async function processBatchResults(batchJob) {
           );
           batchErrorCount++;
           overallProcessingStatus = "processed_with_errors";
-          // Optionally mark paper as failed in arxivPapersData table
+          // Optionally mark paper as failed
         }
       } catch (paperProcessingError) {
         logWithTimestamp(
-          `ERROR processing individual result for paper ${paperId} in batch ${batchJob.batch_id}: ${paperProcessingError.message}`
+          `ERROR processing individual result for paper ${paperIdStr} in batch ${batchJob.batch_id}: ${paperProcessingError.message}`
         );
         console.error(paperProcessingError);
         batchErrorCount++;
@@ -241,12 +236,11 @@ async function processBatchResults(batchJob) {
       `CRITICAL ERROR processing results stream for batch ${batchJob.batch_id}: ${error.message}`
     );
     console.error(error);
-    overallProcessingStatus = "failed"; // Mark batch as failed if result processing loop fails critically
+    overallProcessingStatus = "failed";
     finalErrorMessage = `Result processing error: ${error.message}`.substring(
       0,
       1000
     );
-    // Estimate counts if loop failed
     batchErrorCount = batchJob.total_requests || 1;
     batchSuccessCount = 0;
   }
@@ -259,15 +253,16 @@ async function processBatchResults(batchJob) {
     const { error: finalUpdateError } = await supabase
       .from(BATCH_JOBS_TABLE)
       .update({
-        status: overallProcessingStatus,
+        status: overallProcessingStatus, // This should now work if ENUM was altered
         processed_at: new Date().toISOString(),
         succeeded_count: batchSuccessCount,
         failed_count: batchErrorCount,
-        error_message: finalErrorMessage, // Store error message if processing failed
+        error_message: finalErrorMessage,
       })
       .eq("batch_id", batchJob.batch_id);
 
     if (finalUpdateError) {
+      // This might still fail if the ENUM wasn't updated in the DB
       logWithTimestamp(
         `CRITICAL DB ERROR: Failed to update final status for batch ${batchJob.batch_id}: ${finalUpdateError.message}`
       );
@@ -291,18 +286,16 @@ async function pollAndProcessBatches() {
 
   let jobsToCheck = [];
   try {
-    // Find jobs that need attention
     const twentyFiveHoursAgo = new Date(
       Date.now() - 25 * 60 * 60 * 1000
     ).toISOString();
     const { data, error } = await supabase
       .from(BATCH_JOBS_TABLE)
       .select("*")
-      .in("status", ["submitted", "polling", "completed"]) // Check submitted, polling, or completed (ready to process)
+      .in("status", ["submitted", "polling", "completed"]) // Check jobs needing status check or processing
       .gte("submitted_at", twentyFiveHoursAgo)
       .order("submitted_at", { ascending: true })
       .limit(POLL_LIMIT);
-
     if (error)
       throw new Error(`DB ERROR fetching pending jobs: ${error.message}`);
     jobsToCheck = data || [];
@@ -310,26 +303,23 @@ async function pollAndProcessBatches() {
   } catch (dbError) {
     logWithTimestamp(`DB Exception fetching pending jobs: ${dbError.message}`);
     console.error(dbError);
-    isRunning = false; // Release lock on error
+    isRunning = false;
     return;
   }
 
   if (jobsToCheck.length === 0) {
     logWithTimestamp("No pending batch jobs found in this cycle.");
-    isRunning = false; // Release lock
+    isRunning = false;
     return;
   }
 
-  // Process jobs sequentially for simplicity
   for (const job of jobsToCheck) {
     logWithTimestamp(
       `Checking batch ${job.batch_id} (Current DB status: ${job.status})...`
     );
     let currentBatchStatus;
     let jobProcessedInThisCycle = false;
-
     try {
-      // Mark as polling (if not already completed)
       if (job.status !== "completed") {
         await supabase
           .from(BATCH_JOBS_TABLE)
@@ -339,15 +329,11 @@ async function pollAndProcessBatches() {
           })
           .eq("batch_id", job.batch_id);
       }
-
-      // Check Anthropic status
       currentBatchStatus = await anthropic.messages.batches.retrieve(
         job.batch_id
       );
       const apiStatus = currentBatchStatus.processing_status;
       logWithTimestamp(`Batch ${job.batch_id} API Status: ${apiStatus}`);
-
-      // Prepare payload for DB update
       const updatePayload = {
         last_polled_at: new Date().toISOString(),
         succeeded_count:
@@ -358,32 +344,32 @@ async function pollAndProcessBatches() {
           (currentBatchStatus.request_counts?.errored ?? 0) +
           (currentBatchStatus.request_counts?.expired ?? 0) +
           (currentBatchStatus.request_counts?.canceled ?? 0),
-        results_url: currentBatchStatus.results_url || job.results_url || null, // Ensure null if not present
-        completed_at: currentBatchStatus.ended_at || job.completed_at || null, // Store when Anthropic finished
-        error_message: job.error_message, // Preserve existing error unless overwritten
+        results_url: currentBatchStatus.results_url || job.results_url || null,
+        completed_at: currentBatchStatus.ended_at || job.completed_at || null,
+        error_message: job.error_message,
       };
-
-      let nextStatus = job.status; // Keep current status unless changed
-
+      let nextStatus = job.status;
       if (apiStatus === "ended" || apiStatus === "completed") {
-        // Only transition to 'completed' if not already processed or failed
+        // Set DB status to 'completed' only if it's not already in a final processed/failed state
         if (
-          job.status !== "processed" &&
-          job.status !== "processed_with_errors" &&
-          job.status !== "failed" &&
-          job.status !== "expired" &&
-          job.status !== "canceled"
+          ![
+            "processed",
+            "processed_with_errors",
+            "failed",
+            "expired",
+            "canceled",
+          ].includes(job.status)
         ) {
           nextStatus = "completed";
         }
         if (!updatePayload.completed_at)
-          updatePayload.completed_at = new Date().toISOString(); // Set completion time if missing
+          updatePayload.completed_at = new Date().toISOString();
       } else if (
         apiStatus === "failed" ||
         apiStatus === "expired" ||
         apiStatus === "canceled"
       ) {
-        nextStatus = apiStatus; // Use Anthropic's terminal failure state
+        nextStatus = apiStatus;
         if (!updatePayload.completed_at)
           updatePayload.completed_at = new Date().toISOString();
         if (!updatePayload.error_message)
@@ -392,25 +378,22 @@ async function pollAndProcessBatches() {
         nextStatus = "canceling";
       } else {
         // Still in_progress
-        nextStatus = "polling"; // Explicitly set back to polling
+        nextStatus = "polling";
       }
-
       updatePayload.status = nextStatus;
 
-      // Update batch_jobs table with latest status from Anthropic
       const { error: statusUpdateError } = await supabase
         .from(BATCH_JOBS_TABLE)
         .update(updatePayload)
         .eq("batch_id", job.batch_id);
-
       if (statusUpdateError) {
         logWithTimestamp(
           `DB ERROR updating status for batch ${job.batch_id}: ${statusUpdateError.message}`
         );
-        continue; // Skip processing results if status update failed
+        continue;
       }
 
-      // If job is now marked as completed, process results
+      // If job status is now 'completed', process results
       if (updatePayload.status === "completed") {
         jobProcessedInThisCycle = true;
         // Mark as 'processing_results' BEFORE starting async processing
@@ -418,17 +401,14 @@ async function pollAndProcessBatches() {
           .from(BATCH_JOBS_TABLE)
           .update({ status: "processing_results" })
           .eq("batch_id", job.batch_id);
-        // Call the results processing function (can run long)
-        // Pass the latest known data for the job
-        await processBatchResults({ ...job, ...updatePayload });
+        await processBatchResults({ ...job, ...updatePayload }); // Pass latest data
       }
     } catch (error) {
       logWithTimestamp(
         `ERROR polling/processing batch ${job.batch_id}: ${error.message}`
       );
       console.error(error);
-      jobProcessedInThisCycle = true; // Attempted processing, even if failed
-      // Mark batch as failed in DB if a critical error occurred
+      jobProcessedInThisCycle = true;
       try {
         await supabase
           .from(BATCH_JOBS_TABLE)
@@ -447,11 +427,9 @@ async function pollAndProcessBatches() {
         );
       }
     }
-
-    // Avoid hammering API if processing happens quickly or many jobs checked
     if (!jobProcessedInThisCycle) {
-      await delay(500); // Delay only if job wasn't processed (still polling)
-    }
+      await delay(500);
+    } // Small delay if not processing results
   } // end for loop
 
   isRunning = false; // Release lock
@@ -459,42 +437,38 @@ async function pollAndProcessBatches() {
   logWithTimestamp(`Polling cycle finished in ${cycleDuration.toFixed(1)}s.`);
 }
 
-// --- Script Execution ---
-
-// Run immediately on start, and then set an interval.
-// This makes it suitable for running under PM2 which keeps the process alive.
+// --- Script Execution & Scheduling ---
 logWithTimestamp(
   `Executing Poller/Processor Script: ${
     process.argv[1] || "poll-and-process-batches.js"
   }`
 );
-
-// Initial run
-pollAndProcessBatches();
-
-// Schedule subsequent runs
-// Note: Consider potential drift with setInterval over long periods.
-// A cron job triggering this script (without the interval) might be more precise.
-// However, setInterval is simpler to manage with PM2 alone.
-setInterval(() => {
-  pollAndProcessBatches();
+pollAndProcessBatches().catch((error) => {
+  logWithTimestamp(
+    `Unhandled error during initial poller run: ${error.message}`
+  );
+  console.error(error);
+  isRunning = false;
+});
+const intervalId = setInterval(() => {
+  pollAndProcessBatches().catch((error) => {
+    logWithTimestamp(
+      `Unhandled error during scheduled poller run: ${error.message}`
+    );
+    console.error(error);
+    isRunning = false;
+  });
 }, POLLING_INTERVAL_MS);
-
-// Optional: Handle graceful shutdown
-process.on("SIGINT", () => {
-  logWithTimestamp("Received SIGINT. Shutting down poller...");
-  // Add any cleanup logic here if needed
-  process.exit(0);
-});
-process.on("SIGTERM", () => {
-  logWithTimestamp("Received SIGTERM. Shutting down poller...");
-  process.exit(0);
-});
-
-// Keep the process running for setInterval
 logWithTimestamp(
   `Poller started. Will run every ${POLLING_INTERVAL_MS / 1000 / 60} minutes.`
 );
-// process.stdin.resume(); // Keep process alive for interval (might not be needed with pm2)
+const shutdown = () => {
+  logWithTimestamp("Received shutdown signal. Stopping poller...");
+  clearInterval(intervalId);
+  logWithTimestamp("Poller stopped.");
+  process.exit(0);
+};
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);
 
 // --- END OF FILE ---
