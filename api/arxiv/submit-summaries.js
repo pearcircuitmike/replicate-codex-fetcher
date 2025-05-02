@@ -690,7 +690,8 @@ async function submitSummariesBatchOnly() {
       .not("generatedOutline", "is", null) // Outline text MUST exist
       .gte("indexedDate", ninetySixHoursAgoISOString) // Filter by indexedDate
       // TODO: Consider check against batch_jobs table?
-      .order("outlineGeneratedAt", { ascending: true }) // Oldest outlines first
+      .order("totalScore", { ascending: false })
+      .order("indexedDate", { ascending: false })
       .limit(SUBMIT_BATCH_SIZE_LIMIT);
 
     if (fetchError)

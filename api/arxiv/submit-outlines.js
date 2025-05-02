@@ -707,6 +707,7 @@ async function submitOutlinesBatchOnly() {
       .is("outlineGeneratedAt", null)
       .gte("indexedDate", ninetySixHoursAgoISOString) // Filter by indexedDate
       // TODO: Check batch_jobs status to prevent re-submission?
+      .order("totalScore", { ascending: false })
       .order("indexedDate", { ascending: false })
       .limit(SUBMIT_BATCH_SIZE_LIMIT);
 
