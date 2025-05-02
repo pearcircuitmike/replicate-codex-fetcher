@@ -1,6 +1,6 @@
 // File: api/arxiv/submit-outlines.js
-// Purpose: Finds papers needing outlines, prepares AGGRESSIVELY SANITIZED data, submits batch job,
-//          and records the batch job ID to the 'batch_jobs' table. Includes debug logging.
+// Purpose: Finds papers indexed in the last 96 hours needing outlines,
+//          prepares SANITIZED data, submits batch job, and records job ID.
 // To be run periodically (e.g., daily) by a scheduler like cron.
 
 import { createClient } from "@supabase/supabase-js";
@@ -16,8 +16,7 @@ dotenv.config();
 // --- Configuration ---
 const BATCH_JOBS_TABLE = "batch_jobs";
 const PAPERS_TABLE = "arxivPapersData";
-// *** SET TO 1 FOR DEBUGGING THE 400 ERROR, SET BACK TO ~200 FOR PRODUCTION ***
-const SUBMIT_BATCH_SIZE_LIMIT = 200; // Or 200 for production
+const SUBMIT_BATCH_SIZE_LIMIT = 200;
 
 // --- Initializations ---
 const logWithTimestamp = (message) => {
@@ -47,7 +46,6 @@ try {
       mistralClient ? "OK" : "N/A"
     }, OpenAI: ${openai ? "OK" : "N/A"}`
   );
-  // Add checks for mandatory clients
   if (!supabase || !anthropic)
     throw new Error("Supabase or Anthropic client failed to initialize.");
 } catch (error) {
@@ -67,15 +65,8 @@ try {
 function sanitizeString(str) {
   if (str === null || str === undefined) return "";
   if (typeof str !== "string") str = String(str);
-
-  // Keep only space through tilde (standard printable ASCII), plus newline, carriage return, tab
   const aggressiveAsciiRegex = /[^\x20-\x7E\n\r\t]/g;
-  const sanitized = str.replace(aggressiveAsciiRegex, "[?]");
-  // Optional: Log if characters were replaced
-  // if (sanitized !== str) {
-  //    logWithTimestamp(`DEBUG: Sanitized string (original length ${str.length}, new ${sanitized.length})`);
-  // }
-  return sanitized;
+  return str.replace(aggressiveAsciiRegex, "[?]");
 }
 
 async function delay(ms) {
@@ -83,6 +74,7 @@ async function delay(ms) {
 }
 
 async function fetchPaperHtml(arxivId) {
+  // Fetches HTML from arXiv, handles 404s gracefully.
   const htmlUrl = `https://arxiv.org/html/${arxivId}`;
   try {
     const response = await axios.get(htmlUrl, { timeout: 15000 });
@@ -547,8 +539,7 @@ function prepareOutlineParams(
   relatedPapers
 ) {
   // Prepares the request parameters for the outline generation batch request.
-  // Uses sanitized data from getPreparedDataForPaper and sanitizes direct inputs.
-  const model = "claude-3-7-sonnet-20250219";
+  const model = "claude-3-7-sonnet-20250219"; // Correct model
   logWithTimestamp(
     `Preparing outline params for paper ${paperData.id} using model ${model}`
   );
@@ -562,7 +553,7 @@ function prepareOutlineParams(
     ? paperData.arxivCategories.join(", ")
     : paperData.arxivCategories || "";
 
-  // These inputs were sanitized by helpers called in getPreparedDataForPaper
+  // Data from getPreparedDataForPaper helpers should already be sanitized
   const sectionsString = sections
     .map(
       (s) =>
@@ -623,7 +614,6 @@ async function submitBatchAndRecord(
   batchDescription = "Batch",
   batchType = "unknown"
 ) {
-  // Submits batch (data presumed sanitized), gets ID, records to BATCH_JOBS_TABLE, returns ID or null.
   if (!batchRequests || batchRequests.length === 0) {
     logWithTimestamp(`No requests provided for ${batchDescription}.`);
     return null;
@@ -699,22 +689,35 @@ async function submitOutlinesBatchOnly() {
   const phaseStartTime = Date.now();
   let submittedBatchId = null;
   try {
-    // Fetch papers needing outlines
+    // *** ADDED DATE FILTER ***
+    const now = new Date();
+    const ninetySixHoursAgo = new Date(
+      now.getTime() - 96 * 60 * 60 * 1000 * 10000
+    );
+    const ninetySixHoursAgoISOString = ninetySixHoursAgo.toISOString();
+    logWithTimestamp(
+      `Workspaceing papers indexed since: ${ninetySixHoursAgoISOString}`
+    );
+
     const { data: papers, error: fetchError } = await supabase
       .from(PAPERS_TABLE)
       .select(
         "id, title, abstract, authors, arxivId, arxivCategories, paperGraphics, paperTables, thumbnail, pdfUrl, embedding"
       )
       .is("outlineGeneratedAt", null)
+      .gte("indexedDate", ninetySixHoursAgoISOString) // Filter by indexedDate
+      // TODO: Check batch_jobs status to prevent re-submission?
       .order("indexedDate", { ascending: false })
-      .limit(SUBMIT_BATCH_SIZE_LIMIT); // Use limit variable
+      .limit(SUBMIT_BATCH_SIZE_LIMIT);
 
     if (fetchError)
       throw new Error(
         `DB Error fetching papers for outline: ${fetchError.message}`
       );
     if (!papers || papers.length === 0) {
-      logWithTimestamp("No papers found needing outline batch submission.");
+      logWithTimestamp(
+        "No papers found needing outline batch submission in the time window."
+      );
       return;
     }
     logWithTimestamp(
@@ -723,7 +726,6 @@ async function submitOutlinesBatchOnly() {
 
     const batchRequests = [];
     for (const paper of papers) {
-      // getPreparedDataForPaper now returns sanitized data
       const prepData = await getPreparedDataForPaper(paper);
       await delay(50);
       if (!prepData) {
@@ -733,8 +735,6 @@ async function submitOutlinesBatchOnly() {
         skippedCount++;
         continue;
       }
-
-      // Prepare params
       const params = prepareOutlineParams(
         paper,
         prepData.sections,
@@ -743,7 +743,7 @@ async function submitOutlinesBatchOnly() {
         prepData.relatedPapers
       );
 
-      // *** DEBUG LOGGING (As requested) ***
+      // *** DEBUG LOGGING ***
       logWithTimestamp(
         `DEBUG: PREPARING TO PUSH request for Paper ID: ${paper.id}`
       );
@@ -754,16 +754,12 @@ async function submitOutlinesBatchOnly() {
           `DEBUG Content Preview (First 500 chars):\n${messageContentSample}` +
             (params.messages[0]?.content?.length > 500 ? "\n..." : "")
         );
-        // Attempt to stringify individually to catch errors earlier (optional)
-        // JSON.stringify({ custom_id: paper.id.toString(), params: params });
-        // logWithTimestamp(`DEBUG: Stringify check OK for Paper ID: ${paper.id}`);
       } catch (debugError) {
         logWithTimestamp(
           `DEBUG: ERROR during pre-push check for Paper ID: ${paper.id} - ${debugError.message}`
         );
-        // Decide whether to skip this paper or let the main submission fail
         skippedCount++;
-        continue; // Skip this paper if pre-check fails
+        continue;
       }
       // *** END DEBUG LOGGING ***
 
@@ -776,13 +772,11 @@ async function submitOutlinesBatchOnly() {
       );
       return;
     }
-
     submittedBatchId = await submitBatchAndRecord(
       batchRequests,
       "Outline Submit Batch",
       "outline"
     );
-
     if (submittedBatchId) {
       submittedCount = batchRequests.length;
     } else {
@@ -812,7 +806,6 @@ logWithTimestamp(
     process.argv[1] || "submit-outlines.js"
   }`
 );
-
 submitOutlinesBatchOnly()
   .then(() => {
     logWithTimestamp("Outline submission process completed successfully.");
