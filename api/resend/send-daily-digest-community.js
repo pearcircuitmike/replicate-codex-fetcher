@@ -228,22 +228,31 @@ async function sendDailyCommunityDigestEmail(
   }
   const paperDetails = await fetchPaperDetails([...new Set(allPaperIds)]);
   const subjectLine = await generateSubjectLine(paperDetails, dateRange);
-  const emailHtml = `
-    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #333;">
-      <div style="text-align: left; margin-bottom: 20px;">
-        <h1 style="color: #0070f3; font-size: 20px; margin-bottom: 8px;">Research & Discussion Digest</h1>
+  const emailHtml = `<!DOCTYPE html>
+  <html lang="en">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>${subjectLine}</title> 
+    </head>
+    <body>
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #333;">
+        <div style="text-align: left; margin-bottom: 20px;">
+          <h1 style="color: #0070f3; font-size: 20px; margin-bottom: 8px;">Research & Discussion Digest</h1>
+        </div>
+        <p style="font-size: 15px; margin: 0 0 15px 0;">Hello! Here's a quick recap of activity on AImodels.fyi today:</p>
+        <div style="margin-bottom: 30px;">
+          <a href="https://www.aimodels.fyi/dashboard" style="display: inline-block; padding: 10px 20px; color: #0070f3; text-decoration: none; font-weight: bold; border: 2px solid #0070f3; border-radius: 4px;">View Dashboard &rarr;</a>
+        </div>
+        ${allCommunitiesHtml}
+        <div style="margin-top: 30px; font-size: 12px; color: #666; text-align: center;">
+          <hr style="border: none; border-top: 1px solid #eee;" />
+          <p style="margin: 10px 0;"><a href="https://www.aimodels.fyi/account" style="color: #666; text-decoration: none;">Manage email preferences</a></p>
+          <p style="margin: 0;">© 2025 AImodels.fyi</p>
+        </div>
       </div>
-      <p style="font-size: 15px; margin: 0 0 15px 0;">Hello! Here's a quick recap of activity on AImodels.fyi today:</p>
-      <div style="margin-bottom: 30px;">
-        <a href="https://www.aimodels.fyi/dashboard" style="display: inline-block; padding: 10px 20px; color: #0070f3; text-decoration: none; font-weight: bold; border: 2px solid #0070f3; border-radius: 4px;">View Dashboard &rarr;</a>
-      </div>
-      ${allCommunitiesHtml}
-      <div style="margin-top: 30px; font-size: 12px; color: #666; text-align: center;">
-        <hr style="border: none; border-top: 1px solid #eee;" />
-        <p style="margin: 10px 0;"><a href="https://www.aimodels.fyi/account" style="color: #666; text-decoration: none;">Manage email preferences</a></p>
-        <p style="margin: 0;">© 2025 AImodels.fyi</p>
-      </div>
-    </div>
+    </body>
+  </html>
   `;
   return resend.emails.send({
     from: "Mike Young <mike@mail.aimodels.fyi>",

@@ -223,6 +223,14 @@ async function sendWeeklyCommunityDigestEmail(
   const paperDetails = await fetchPaperDetails([...new Set(allPaperIds)]);
   const subjectLine = await generateSubjectLine(paperDetails, dateRange);
   const emailHtml = `
+  <!DOCTYPE html>
+  <html lang="en">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>${subjectLine}</title> 
+    </head>
+    <body>
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #333;">
       <div style="text-align: left; margin-bottom: 20px;">
         <h1 style="color: #0070f3; font-size: 20px; margin-bottom: 8px;">
@@ -259,6 +267,8 @@ async function sendWeeklyCommunityDigestEmail(
         <p style="margin: 0;">© 2025 AImodels.fyi</p>
       </div>
     </div>
+    </body>
+  </html>
   `;
   return resend.emails.send({
     from: "Mike Young <mike@mail.aimodels.fyi>",
