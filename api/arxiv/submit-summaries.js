@@ -678,7 +678,7 @@ async function submitSummariesBatchOnly() {
     const ninetySixHoursAgo = new Date(now.getTime() - 96 * 60 * 60 * 1000);
     const ninetySixHoursAgoISOString = ninetySixHoursAgo.toISOString();
     logWithTimestamp(
-      `Workspaceing papers indexed since: ${ninetySixHoursAgoISOString}`
+      `Fetching papers indexed since: ${ninetySixHoursAgoISOString}`
     );
 
     // Fetch papers ready for summaries WITHIN THE LAST 96 HOURS

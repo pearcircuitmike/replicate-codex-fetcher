@@ -694,7 +694,7 @@ async function submitOutlinesBatchOnly() {
     const ninetySixHoursAgo = new Date(now.getTime() - 96 * 60 * 60 * 1000);
     const ninetySixHoursAgoISOString = ninetySixHoursAgo.toISOString();
     logWithTimestamp(
-      `Workspaceing papers indexed since: ${ninetySixHoursAgoISOString}`
+      `Fetching papers indexed since: ${ninetySixHoursAgoISOString}`
     );
 
     const { data: papers, error: fetchError } = await supabase
