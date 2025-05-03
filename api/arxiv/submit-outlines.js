@@ -16,7 +16,7 @@ dotenv.config();
 // --- Configuration ---
 const BATCH_JOBS_TABLE = "batch_jobs";
 const PAPERS_TABLE = "arxivPapersData";
-const SUBMIT_BATCH_SIZE_LIMIT = 200;
+const SUBMIT_BATCH_SIZE_LIMIT = 20;
 
 // --- Initializations ---
 const logWithTimestamp = (message) => {
@@ -691,9 +691,7 @@ async function submitOutlinesBatchOnly() {
   try {
     // *** ADDED DATE FILTER ***
     const now = new Date();
-    const ninetySixHoursAgo = new Date(
-      now.getTime() - 96 * 60 * 60 * 1000 * 10000
-    );
+    const ninetySixHoursAgo = new Date(now.getTime() - 96 * 60 * 60 * 1000);
     const ninetySixHoursAgoISOString = ninetySixHoursAgo.toISOString();
     logWithTimestamp(
       `Workspaceing papers indexed since: ${ninetySixHoursAgoISOString}`
