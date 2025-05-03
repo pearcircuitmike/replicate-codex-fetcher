@@ -1058,24 +1058,26 @@ async function processPaperBatch(offset, limit) {
   // Use RPC to execute a query that selects papers without entries in paperAuthors
   // and ensures the authors array is not null.
   const sqlQuery = `
-      SELECT json_build_object(
-          'id', p.id,
-          'authors', p.authors,
-          'arxivId', p."arxivId", -- Use double quotes for case-sensitive column
-          'doi', p.doi
-      )
-      FROM
-          "${TARGET_SCHEMA}"."arxivPapersData" p
-      LEFT JOIN
-          "${TARGET_SCHEMA}"."paperAuthors" pa ON p.id = pa.paper_id
-      WHERE
-          pa.paper_id IS NULL -- Only select papers with NO links in paperAuthors
-          AND p.authors IS NOT NULL -- Optimization: Exclude papers where authors array is NULL
-      ORDER BY
-          p."publishedDate" DESC -- Use double quotes for case-sensitive column. Or choose another consistent order like p.id
-      LIMIT ${limit}
-      OFFSET ${offset};
-  `;
+  SELECT json_build_object(
+      'id', p.id,
+      'authors', p.authors,
+      'arxivId', p."arxivId", -- Use double quotes for case-sensitive column
+      'doi', p.doi
+      -- Optionally include indexedDate if needed for debugging:
+      -- ,'indexedDate', p."indexedDate" 
+  )
+  FROM
+      "${TARGET_SCHEMA}"."arxivPapersData" p
+  LEFT JOIN
+      "${TARGET_SCHEMA}"."paperAuthors" pa ON p.id = pa.paper_id
+  WHERE
+      pa.paper_id IS NULL -- Only select papers with NO links in paperAuthors
+      AND p.authors IS NOT NULL -- Optimization: Exclude papers where authors array is NULL
+  ORDER BY
+      p."indexedDate" DESC -- Use the unique indexedDate column
+  LIMIT ${limit}
+  OFFSET ${offset};
+`;
   console.log("Executing SQL:", sqlQuery); // Log the query for debugging
 
   const { data: papers, error: rpcError } = await supabase.rpc(
