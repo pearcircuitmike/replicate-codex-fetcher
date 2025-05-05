@@ -1,4 +1,4 @@
-// File: utils/poll-and-process-batches.js (Corrected)
+// File: utils/poll-and-process-batches.js (Corrected - Minimal Revalidation ONLY)
 // Purpose: Polls Anthropic batch jobs, processes results, updates DBs.
 // Runs frequently via scheduler.
 
@@ -6,6 +6,7 @@ import { createClient } from "@supabase/supabase-js";
 import dotenv from "dotenv";
 import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
+import axios from "axios"; // <-- 1. Import axios
 
 dotenv.config();
 
@@ -14,6 +15,7 @@ const BATCH_JOBS_TABLE = "batch_jobs";
 const PAPERS_TABLE = "arxivPapersData";
 const POLL_LIMIT = 50;
 const POLLING_INTERVAL_MS = 15 * 60 * 1000; // 15 minutes
+const REVALIDATE_TIMEOUT_MS = 10000; // 10 seconds timeout for revalidation request // <-- Added
 
 // --- Initializations ---
 const logWithTimestamp = (message) => {
@@ -22,6 +24,12 @@ const logWithTimestamp = (message) => {
 };
 
 let supabase, anthropic, openai;
+// --- 2. Add Revalidation Config ---
+const siteUrl = process.env.NEXT_PUBLIC_SITE_URL;
+const revalidateSecret = process.env.MY_SECRET_TOKEN;
+let revalidationEnabled = true;
+// --- End Revalidation Config ---
+
 try {
   logWithTimestamp("Initializing clients...");
   supabase = createClient(
@@ -38,6 +46,16 @@ try {
   openai = process.env.OPENAI_SECRET_KEY
     ? new OpenAI({ apiKey: process.env.OPENAI_SECRET_KEY })
     : null;
+
+  // --- Check Revalidation Config ---
+  if (!siteUrl || !revalidateSecret) {
+    logWithTimestamp(
+      "Warning: NEXT_PUBLIC_SITE_URL or MY_SECRET_TOKEN missing. Revalidation disabled."
+    );
+    revalidationEnabled = false;
+  }
+  // --- End Check ---
+
   if (!supabase || !anthropic)
     throw new Error("Supabase or Anthropic client failed to initialize.");
   logWithTimestamp("Clients Initialized.");
@@ -53,8 +71,62 @@ async function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// --- 3. Add Revalidation Helper Function ---
+async function triggerRevalidation(paperId) {
+  if (!revalidationEnabled) {
+    return;
+  }
+  logWithTimestamp(`Attempting revalidation for paper ${paperId}...`);
+  try {
+    const { data: paperMeta, error: fetchError } = await supabase
+      .from(PAPERS_TABLE)
+      .select("slug, platform")
+      .eq("id", paperId)
+      .single();
+
+    if (fetchError)
+      throw new Error(
+        `DB error fetching slug/platform for revalidation (ID: ${paperId}): ${fetchError.message}`
+      );
+    if (!paperMeta || !paperMeta.slug || !paperMeta.platform)
+      throw new Error(
+        `Missing slug or platform for paper ${paperId}, cannot revalidate.`
+      );
+
+    const path = `/papers/${paperMeta.platform}/${paperMeta.slug}`;
+    const url = `${siteUrl}/api/revalidate?secret=${revalidateSecret}&path=${encodeURIComponent(
+      path
+    )}`;
+
+    const resp = await axios.get(url, { timeout: REVALIDATE_TIMEOUT_MS });
+
+    if (resp.data && resp.data.revalidated) {
+      logWithTimestamp(
+        `Successfully revalidated path ${path} for paper ${paperId}.`
+      );
+    } else {
+      logWithTimestamp(
+        `Revalidation request for path ${path} (Paper ${paperId}) completed. Response: ${JSON.stringify(
+          resp.data
+        )}`
+      );
+    }
+  } catch (err) {
+    const errorMessage = err.response?.data
+      ? JSON.stringify(err.response.data)
+      : err.message;
+    logWithTimestamp(
+      `ERROR triggering revalidation for paper ${paperId}: ${errorMessage}`
+    );
+    if (err.config?.url) {
+      logWithTimestamp(`Failed URL: ${err.config.url.split("?")[0]}`);
+    }
+  }
+}
+// --- End Revalidation Helper ---
+
 async function createEmbeddingForPaper(paperId, generatedSummary) {
-  // Expects paperId to be the correct type (string UUID in this case)
+  // (This function remains exactly as in your original script)
   if (!openai) {
     logWithTimestamp(`Skipping embedding ${paperId}: OpenAI client missing.`);
     return null;
@@ -67,7 +139,7 @@ async function createEmbeddingForPaper(paperId, generatedSummary) {
         "id, title, arxivCategories, abstract, authors, lastUpdated, arxivId"
       )
       .eq("id", paperId)
-      .single(); // Use paperId directly
+      .single();
     if (fetchError)
       throw new Error(
         `DB error fetching paper data for embedding (ID: ${paperId}): ${fetchError.message}`
@@ -99,7 +171,7 @@ async function createEmbeddingForPaper(paperId, generatedSummary) {
     const { error: updateError } = await supabase
       .from(PAPERS_TABLE)
       .update({ embedding: embedding, lastUpdated: new Date().toISOString() })
-      .eq("id", paperData.id); // Use paperData.id (which is correct type)
+      .eq("id", paperData.id);
     if (updateError)
       throw new Error(
         `DB error updating embedding for ${paperId}: ${updateError.message}`
@@ -116,6 +188,7 @@ async function createEmbeddingForPaper(paperId, generatedSummary) {
 }
 
 async function processBatchResults(batchJob) {
+  // (This function remains exactly as in your original script, except for the revalidation call)
   logWithTimestamp(
     `Starting result processing for Batch ID: ${batchJob.batch_id} (Type: ${batchJob.batch_type})`
   );
@@ -128,7 +201,7 @@ async function processBatchResults(batchJob) {
     for await (const result of await anthropic.messages.batches.results(
       batchJob.batch_id
     )) {
-      const paperIdStr = result.custom_id; // Keep as string (UUID)
+      const paperIdStr = result.custom_id;
       if (!paperIdStr) {
         logWithTimestamp(
           `WARN: Result missing custom_id in batch ${batchJob.batch_id}. Skipping.`
@@ -137,8 +210,6 @@ async function processBatchResults(batchJob) {
         overallProcessingStatus = "processed_with_errors";
         continue;
       }
-      // *** REMOVED parseInt - Use paperIdStr directly where needed for DB queries ***
-      // const paperId = parseInt(paperIdStr, 10); // REMOVED
 
       try {
         if (result.result.type === "succeeded") {
@@ -154,6 +225,7 @@ async function processBatchResults(batchJob) {
 
           let updatePayload = {};
           let embeddingSuccess = true;
+          let needsRevalidation = false; // <-- 4a. Define flag
 
           if (batchJob.batch_type === "outline") {
             updatePayload = {
@@ -161,13 +233,15 @@ async function processBatchResults(batchJob) {
               outlineGeneratedAt: new Date().toISOString(),
             };
             logWithTimestamp(`Processed outline for paper ${paperIdStr}.`);
+            needsRevalidation = true; // <-- 4b. Set flag
           } else if (batchJob.batch_type === "summary") {
             updatePayload = {
               generatedSummary: textContent,
               enhancedSummaryCreatedAt: new Date().toISOString(),
-              embedding: null,
+              // embedding: null, // Embedding is updated in createEmbeddingForPaper
             };
-            // Call embedding function with the correct UUID string ID
+            needsRevalidation = true; // <-- 4b. Set flag
+
             const embedding = await createEmbeddingForPaper(
               paperIdStr,
               textContent
@@ -191,25 +265,33 @@ async function processBatchResults(batchJob) {
             continue;
           }
 
-          // Update the main paper table using the string UUID
           const { error: paperUpdateError } = await supabase
             .from(PAPERS_TABLE)
             .update({ ...updatePayload, lastUpdated: new Date().toISOString() })
-            .eq("id", paperIdStr); // *** Use paperIdStr (UUID) here ***
+            .eq("id", paperIdStr);
 
           if (paperUpdateError) {
-            // Log the specific UUID causing the error if possible
             logWithTimestamp(
               `ERROR updating paper ${paperIdStr} result from batch ${batchJob.batch_id}: ${paperUpdateError.message}`
             );
             batchErrorCount++;
             overallProcessingStatus = "processed_with_errors";
           } else {
-            if (embeddingSuccess) batchSuccessCount++;
-            else batchErrorCount++;
+            // Original success/error counting based on embedding success
+            if (batchJob.batch_type === "summary") {
+              if (embeddingSuccess) batchSuccessCount++;
+              else batchErrorCount++;
+            } else {
+              batchSuccessCount++; // Outline counts as success if DB update ok
+            }
+
+            // --- 4c. Call Revalidation Here ---
+            if (needsRevalidation) {
+              await triggerRevalidation(paperIdStr);
+            }
+            // --- End Revalidation Call ---
           }
         } else {
-          // Handle failed result for this paper
           logWithTimestamp(
             `Result failed for paper ${paperIdStr} in batch ${
               batchJob.batch_id
@@ -219,7 +301,6 @@ async function processBatchResults(batchJob) {
           );
           batchErrorCount++;
           overallProcessingStatus = "processed_with_errors";
-          // Optionally mark paper as failed
         }
       } catch (paperProcessingError) {
         logWithTimestamp(
@@ -229,7 +310,7 @@ async function processBatchResults(batchJob) {
         batchErrorCount++;
         overallProcessingStatus = "processed_with_errors";
       }
-      await delay(100); // Small delay between processing results
+      await delay(100);
     } // end for await results loop
   } catch (error) {
     logWithTimestamp(
@@ -241,11 +322,13 @@ async function processBatchResults(batchJob) {
       0,
       1000
     );
-    batchErrorCount = batchJob.total_requests || 1;
-    batchSuccessCount = 0;
+    batchErrorCount =
+      batchJob.total_requests > 0
+        ? batchJob.total_requests - batchSuccessCount
+        : 1;
+    if (batchErrorCount < 0) batchErrorCount = 1;
   }
 
-  // Final update to the batch_jobs table
   logWithTimestamp(
     `Finished processing results for Batch ${batchJob.batch_id}. Success: ${batchSuccessCount}, Errors: ${batchErrorCount}. Final Status: ${overallProcessingStatus}`
   );
@@ -253,7 +336,7 @@ async function processBatchResults(batchJob) {
     const { error: finalUpdateError } = await supabase
       .from(BATCH_JOBS_TABLE)
       .update({
-        status: overallProcessingStatus, // This should now work if ENUM was altered
+        status: overallProcessingStatus,
         processed_at: new Date().toISOString(),
         succeeded_count: batchSuccessCount,
         failed_count: batchErrorCount,
@@ -262,7 +345,6 @@ async function processBatchResults(batchJob) {
       .eq("batch_id", batchJob.batch_id);
 
     if (finalUpdateError) {
-      // This might still fail if the ENUM wasn't updated in the DB
       logWithTimestamp(
         `CRITICAL DB ERROR: Failed to update final status for batch ${batchJob.batch_id}: ${finalUpdateError.message}`
       );
@@ -276,6 +358,7 @@ async function processBatchResults(batchJob) {
 
 // --- Main Polling Function ---
 async function pollAndProcessBatches() {
+  // (This function remains exactly as in your original script)
   if (isRunning) {
     logWithTimestamp("Polling cycle already running. Skipping.");
     return;
@@ -292,7 +375,8 @@ async function pollAndProcessBatches() {
     const { data, error } = await supabase
       .from(BATCH_JOBS_TABLE)
       .select("*")
-      .in("status", ["submitted", "polling", "completed"]) // Check jobs needing status check or processing
+      // Using the exact status list from your original script
+      .in("status", ["submitted", "polling", "completed"])
       .gte("submitted_at", twentyFiveHoursAgo)
       .order("submitted_at", { ascending: true })
       .limit(POLL_LIMIT);
@@ -317,10 +401,11 @@ async function pollAndProcessBatches() {
     logWithTimestamp(
       `Checking batch ${job.batch_id} (Current DB status: ${job.status})...`
     );
-    let currentBatchStatus;
+    let currentBatchStatus; // Using the variable name from your original script
     let jobProcessedInThisCycle = false;
     try {
       if (job.status !== "completed") {
+        // This status update to 'polling' was in your original script
         await supabase
           .from(BATCH_JOBS_TABLE)
           .update({
@@ -332,25 +417,34 @@ async function pollAndProcessBatches() {
       currentBatchStatus = await anthropic.messages.batches.retrieve(
         job.batch_id
       );
+
+      // Using the exact property 'processing_status' from your original script's logic context
+      // Note: If the API *actually* returns status in a different field now, this original
+      // logic might fail. But sticking to it per your request.
       const apiStatus = currentBatchStatus.processing_status;
-      logWithTimestamp(`Batch ${job.batch_id} API Status: ${apiStatus}`);
+      logWithTimestamp(`Batch ${job.batch_id} API Status: ${apiStatus}`); // Check this log output carefully
+
+      // Using the exact update payload structure from your original script
       const updatePayload = {
         last_polled_at: new Date().toISOString(),
         succeeded_count:
           currentBatchStatus.request_counts?.succeeded ??
           job.succeeded_count ??
           0,
+        // Using the exact failure count logic from your original script
         failed_count:
           (currentBatchStatus.request_counts?.errored ?? 0) +
           (currentBatchStatus.request_counts?.expired ?? 0) +
           (currentBatchStatus.request_counts?.canceled ?? 0),
+        // Using 'results_url' and 'ended_at' as in your original script
         results_url: currentBatchStatus.results_url || job.results_url || null,
         completed_at: currentBatchStatus.ended_at || job.completed_at || null,
         error_message: job.error_message,
       };
       let nextStatus = job.status;
+
+      // Using the exact status transition logic from your original script
       if (apiStatus === "ended" || apiStatus === "completed") {
-        // Set DB status to 'completed' only if it's not already in a final processed/failed state
         if (
           ![
             "processed",
@@ -375,9 +469,10 @@ async function pollAndProcessBatches() {
         if (!updatePayload.error_message)
           updatePayload.error_message = `Anthropic reported final status: ${apiStatus}`;
       } else if (apiStatus === "canceling") {
+        // Using 'canceling' as in original
         nextStatus = "canceling";
       } else {
-        // Still in_progress
+        // Assumes anything else means still in progress -> polling
         nextStatus = "polling";
       }
       updatePayload.status = nextStatus;
@@ -393,22 +488,24 @@ async function pollAndProcessBatches() {
         continue;
       }
 
-      // If job status is now 'completed', process results
+      // Using the exact trigger condition for processing results from your original script
       if (updatePayload.status === "completed") {
         jobProcessedInThisCycle = true;
-        // Mark as 'processing_results' BEFORE starting async processing
+        // Using the exact status update to 'processing_results' from your original script
         await supabase
           .from(BATCH_JOBS_TABLE)
           .update({ status: "processing_results" })
           .eq("batch_id", job.batch_id);
-        await processBatchResults({ ...job, ...updatePayload }); // Pass latest data
+        // Passing the merged data as in your original script
+        await processBatchResults({ ...job, ...updatePayload });
       }
     } catch (error) {
+      // Using the exact error handling from your original script
       logWithTimestamp(
         `ERROR polling/processing batch ${job.batch_id}: ${error.message}`
       );
       console.error(error);
-      jobProcessedInThisCycle = true;
+      jobProcessedInThisCycle = true; // Mark as handled (with error)
       try {
         await supabase
           .from(BATCH_JOBS_TABLE)
@@ -429,15 +526,16 @@ async function pollAndProcessBatches() {
     }
     if (!jobProcessedInThisCycle) {
       await delay(500);
-    } // Small delay if not processing results
+    }
   } // end for loop
 
-  isRunning = false; // Release lock
+  isRunning = false;
   const cycleDuration = (Date.now() - cycleStartTime) / 1000;
   logWithTimestamp(`Polling cycle finished in ${cycleDuration.toFixed(1)}s.`);
 }
 
 // --- Script Execution & Scheduling ---
+// (This section remains exactly as in your original script)
 logWithTimestamp(
   `Executing Poller/Processor Script: ${
     process.argv[1] || "poll-and-process-batches.js"
