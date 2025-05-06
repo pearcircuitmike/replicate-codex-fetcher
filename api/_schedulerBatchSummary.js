@@ -115,20 +115,20 @@ cron.schedule("05 06 * * *", async () => {
     logWithTimestamp("Running outline submission script...");
     await runScript("arxiv/submit-outlines.js");
     logWithTimestamp("Outline submission script finished.");
+    await runScript("arxiv/choose-paper-tasks.js");
 
     // -------------------------
     // Arxiv scripts (Phase 2) - *** CORRECTED PATHS ***
     // -------------------------
     await runScript("arxiv/fetch-paper-graphics.js");
     await runScript("arxiv/fetch-paper-tables.js");
-    await runScript("arxiv/publish-to-devto.js");
-    await runScript("arxiv/choose-paper-tasks.js");
+    // await runScript("arxiv/publish-to-devto.js"); - comment this for now, it's not driving much traffic.
 
     // -------------------------
-    // Wait for Outline Batch to Process
+    // Wait for Outline Batch to Process - Delay 30 mins, totals almost 1 hour since prior script are very slow.
     // -------------------------
-    const delayMinutes = 120;
-    const delayMs = delayMinutes * 60 * 1000;
+    const delayMinutes = 30;
+    const delayMs = delayMinutes * 30 * 1000;
     logWithTimestamp(
       `Waiting for ${delayMinutes} minutes before submitting summaries...`
     );
@@ -140,13 +140,6 @@ cron.schedule("05 06 * * *", async () => {
     // -------------------------
     await runScript("arxiv/submit-summaries.js");
     logWithTimestamp("Summary submission script finished.");
-
-    // --------------------------------------------------------
-    // Final ArXiv Revalidation - *** CORRECTED PATH ***
-    // --------------------------------------------------------
-    logWithTimestamp("Running final revalidation for ArXiv papers...");
-    await runScript("arxiv/revalidate-papers.js");
-    logWithTimestamp("Final ArXiv revalidation finished.");
 
     logWithTimestamp("All scheduled ARXIV tasks completed successfully.");
   } catch (error) {
