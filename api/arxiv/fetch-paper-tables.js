@@ -20,7 +20,7 @@ const mistralClient = new Mistral({
 console.log("[INIT] Mistral OCR model initialized");
 
 // Human-like behavior constants for arxiv.org and PDF fetching
-const BATCH_SIZE = 100;
+const BATCH_SIZE = 40; // adjust as need - match batch scheduler
 const BASE_DELAY = 5000; // Base delay between actions
 const VARIANCE_FACTOR = 0.3; // 30% variance in timing
 const MIN_PAGE_VIEW_TIME = 5000; // Minimum time to view a page

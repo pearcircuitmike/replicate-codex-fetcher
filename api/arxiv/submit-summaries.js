@@ -16,7 +16,7 @@ dotenv.config();
 // --- Configuration ---
 const BATCH_JOBS_TABLE = "batch_jobs";
 const PAPERS_TABLE = "arxivPapersData";
-const SUBMIT_BATCH_SIZE_LIMIT = 20;
+const SUBMIT_BATCH_SIZE_LIMIT = 40; // adjust as needed
 
 // --- Initializations ---
 const logWithTimestamp = (message) => {
