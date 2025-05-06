@@ -80,8 +80,8 @@ const runScript = (scriptPath) => {
   });
 };
 
-// Schedule the scripts to run every day at 6:30 AM UTC
-cron.schedule("30 06 * * *", async () => {
+// Schedule the scripts to run every day at 1:30 AM UTC
+cron.schedule("30 01 * * *", async () => {
   if (isScriptRunning) {
     logWithTimestamp(
       "Main task scripts are already running. Skipping execution."
@@ -131,5 +131,5 @@ cron.schedule("30 06 * * *", async () => {
 });
 
 logWithTimestamp(
-  "Main Scheduler script started. Main tasks will run every day at 6:30 AM UTC."
+  "Main Scheduler script started. Main tasks will run every day at 1:30 AM UTC."
 );

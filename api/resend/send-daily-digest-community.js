@@ -54,12 +54,30 @@ function renderCommunitySection(communityName, papers) {
   const papersHtml = papers
     .map((paper) => {
       const title = paper.title || "Untitled Paper";
-      const authorsArr = Array.isArray(paper.authors) ? paper.authors : [];
+      // --- AUTHOR PROCESSING WITH CLIENT-SIDE SORTING ---
+      let authorsArr = [];
+
+      // Check if paperAuthors exists and is an array fetched from the query
+      if (Array.isArray(paper.paperAuthors) && paper.paperAuthors.length > 0) {
+        // ** Explicitly sort the nested array by author_order **
+        const sortedPaperAuthors = paper.paperAuthors.sort(
+          (a, b) => a.author_order - b.author_order
+        );
+
+        // Map sorted authors to get their canonical names
+        authorsArr = sortedPaperAuthors
+          .map((pa) => pa.authors?.canonical_name) // Safely access nested name
+          .filter((name) => typeof name === "string" && name.length > 0); // Filter out null/empty names
+      }
+
       let authorsString = "";
-      if (authorsArr.length > 3) {
-        authorsString = authorsArr.slice(0, 3).join(", ") + ", and others";
+      if (authorsArr.length === 0) {
+        authorsString = "Unknown author"; // Default if relation lookup fails or yields no names
+      } else if (authorsArr.length > 3) {
+        // Use "et al." for academic convention
+        authorsString = authorsArr.slice(0, 3).join(", ") + ", et al.";
       } else {
-        authorsString = authorsArr.join(", ") || "Unknown author";
+        authorsString = authorsArr.join(", ");
       }
 
       const shortAbstract = paper.abstract
@@ -126,7 +144,21 @@ async function fetchPapersForCommunity(
 
   const { data: papers, error: papersErr } = await supabase
     .from("arxivPapersData")
-    .select("id, title, abstract, authors, slug, totalScore")
+    .select(
+      `
+      id, 
+      title, 
+      abstract, 
+      slug, 
+      totalScore,
+      paperAuthors!inner (  
+        author_order,
+        authors!inner (      
+          canonical_name
+        )
+      )
+    `
+    )
     .gte("indexedDate", startDate.toISOString())
     .lte("indexedDate", endDate.toISOString())
     .overlaps("task_ids", taskIds)
