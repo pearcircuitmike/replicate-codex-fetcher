@@ -1,19 +1,15 @@
-// fetch-new-papers.js
 import { createClient } from "@supabase/supabase-js";
 import * as dotenv from "dotenv";
 import axios from "axios";
 import Parser from "rss-parser";
 import slugify from "slugify";
-// Removed unused url/path imports unless needed elsewhere (dotenv default path is usually sufficient)
-// import { fileURLToPath } from "url";
-// import { dirname } from "path";
+// Added for HTML storing
+import zlib from "zlib";
+import crypto from "crypto";
+import { Buffer } from "buffer"; // Ensure Buffer is available
 
 // Set up explicit execution logging
 console.log("Script starting: fetch-new-papers.js");
-
-// Removed unused __filename/__dirname definitions
-// const __filename = fileURLToPath(import.meta.url);
-// const __dirname = dirname(__filename);
 
 // Load environment variables
 dotenv.config();
@@ -48,6 +44,8 @@ const MAX_WORKS_PAGES_TO_CHECK = 10; // Safety limit for pagination
 // --- Script Configuration ---
 const DELAY_BETWEEN_AUTHORS_MS = 1100; // Delay between processing each author (for ORCID rate limits)
 const DELAY_WITHIN_WORKS_CHECK_MS = 150; // Delay within works check loop (for ORCID rate limits)
+// *** IMPORTANT: Add delay for HTML fetching if calling sequentially ***
+const DELAY_BETWEEN_HTML_FETCH_MS = 5000; // Start with 5 seconds, ADJUST based on arXiv limits/blocking
 
 // Configure RSS parser with custom fields
 const rssParser = new Parser({
@@ -84,6 +82,15 @@ const allowedCategories = [
   "stat.ML",
 ];
 
+// Browser simulation headers (needed for HTML fetch)
+const browserHeaders = {
+  "User-Agent":
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+  Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+  "Accept-Language": "en-US,en;q=0.9",
+  Connection: "keep-alive",
+};
+
 // --- Helper Functions ---
 
 // Simple delay function
@@ -107,7 +114,14 @@ function sanitizeValue(value) {
 
 function extractArxivId(url) {
   const match = url ? url.match(/\/abs\/(.+)/) : null;
-  return match ? match[1].replace(/v\d+$/, "") : null;
+  // Extract ID and try to get version if present
+  const idWithVersion = match ? match[1] : null;
+  if (!idWithVersion) return { id: null, version: null };
+
+  const versionMatch = idWithVersion.match(/v(\d+)$/);
+  const version = versionMatch ? `v${versionMatch[1]}` : null;
+  const id = idWithVersion.replace(/v\d+$/, "");
+  return { id, version };
 }
 
 function normalizeArxivId(id) {
@@ -115,7 +129,7 @@ function normalizeArxivId(id) {
   return id
     .toLowerCase()
     .replace(/^arxiv:/, "")
-    .replace(/v\d+$/, "")
+    .replace(/v\d+$/, "") // Ensure version is stripped for normalization
     .trim();
 }
 
@@ -163,7 +177,8 @@ function isAnnounceTypeNew(item) {
 }
 
 // --- ORCID API Interaction ---
-
+// [ORCID functions: getOrcidApiToken, searchOrcidByName, checkOrcidWorksForPaper, triggerOrcidEnrichment, resolveAuthor - remain unchanged]
+// ... (Keep existing ORCID functions here) ...
 let orcidTokenCache = { token: null, expiry: null };
 
 async function getOrcidApiToken() {
@@ -785,24 +800,119 @@ async function resolveAuthor(
   }
 }
 
+// --- NEW: Function to fetch and store arXiv HTML ---
+/**
+ * Fetches HTML for a given arXiv paper, gzips it, calculates hash, and stores in paper_assets.
+ * Logs fetch errors to the table.
+ * @param {string} paperId - The UUID of the paper in arxivPapersData.
+ * @param {string} arxivIdWithVersion - The arXiv ID, potentially including version (e.g., '2301.12345v1').
+ */
+async function storeArxivHtml(paperId, arxivIdWithVersion) {
+  const plainArxivId = normalizeArxivId(arxivIdWithVersion); // Get ID without version for logging consistency
+  console.log(
+    `[HTML Store] Attempting to store HTML for paperId: ${paperId}, arxivId: ${plainArxivId}`
+  );
+  const htmlUrl = `https://arxiv.org/html/${arxivIdWithVersion}`; // Use ID with version for fetching correct HTML
+  let versionIdentifier = arxivIdWithVersion.match(/v(\d+)$/)?.[0] || null; // Extract 'vX'
+
+  try {
+    const response = await axios.get(htmlUrl, {
+      headers: browserHeaders,
+      timeout: 20000, // Increased timeout for potentially larger HTML pages
+      responseType: "text", // Ensure we get text
+    });
+
+    const htmlContent = response.data;
+    if (!htmlContent || typeof htmlContent !== "string") {
+      throw new Error("Fetched content is not valid HTML string.");
+    }
+
+    // Gzip Content
+    const gzippedContent = zlib.gzipSync(Buffer.from(htmlContent, "utf-8"));
+
+    // Calculate Hash (of uncompressed content)
+    const hash = crypto.createHash("sha256").update(htmlContent).digest("hex");
+
+    // Insert into public.paper_assets
+    const { data, error: insertError } = await supabase
+      .from("paper_assets")
+      .insert({
+        paper_id: paperId,
+        arxiv_id: plainArxivId, // Store normalized ID
+        asset_type: "html_content_gzipped",
+        content_gzipped: gzippedContent, // Supabase client should handle Buffer
+        source_url: htmlUrl,
+        content_hash_sha256: hash,
+        content_version_identifier: versionIdentifier,
+        fetched_at: new Date().toISOString(),
+        fetch_error: null, // Explicitly set to null on success
+      });
+
+    if (insertError) {
+      console.error(
+        `[HTML Store] DB insert error for ${plainArxivId}:`,
+        insertError
+      );
+      // Optional: Decide if you want to throw an error here or just log it
+    } else {
+      console.log(`[HTML Store] Successfully stored HTML for ${plainArxivId}.`);
+    }
+  } catch (fetchError) {
+    let errorMessage = fetchError.message;
+    if (axios.isAxiosError(fetchError) && fetchError.response) {
+      errorMessage = `HTTP ${fetchError.response.status}: ${fetchError.message}`;
+      console.error(
+        `[HTML Store] Fetch error for ${plainArxivId} (${htmlUrl}): HTTP ${fetchError.response.status}`
+      );
+    } else {
+      console.error(
+        `[HTML Store] Fetch/Processing error for ${plainArxivId} (${htmlUrl}): ${errorMessage}`
+      );
+    }
+
+    // Log the failure to paper_assets
+    const { error: logError } = await supabase.from("paper_assets").insert({
+      paper_id: paperId,
+      arxiv_id: plainArxivId, // Store normalized ID
+      asset_type: "html_content_gzipped",
+      source_url: htmlUrl,
+      fetch_error: errorMessage.substring(0, 500), // Truncate long errors
+      content_version_identifier: versionIdentifier,
+      fetched_at: new Date().toISOString(),
+    });
+
+    if (logError) {
+      console.error(
+        `[HTML Store] CRITICAL: Failed to log fetch error for ${plainArxivId} to DB:`,
+        logError
+      );
+    }
+  }
+}
+
 /**
  * Main function to check and insert papers and link authors
  */
 async function checkAndInsertPaperIfNew(item, allCategories, pubDate) {
   const title = sanitizeValue(item.title);
   const paperUrl = sanitizeValue(item.link);
-  const arxivId = extractArxivId(paperUrl);
+  // Use the modified extractArxivId to get ID and version
+  const { id: arxivIdBase, version: arxivVersion } = extractArxivId(paperUrl);
+  // Construct the ID with version if available, otherwise use base ID for fetching HTML later
+  const arxivIdForHtmlFetch = arxivVersion
+    ? `${arxivIdBase}${arxivVersion}`
+    : arxivIdBase;
 
-  console.log(`Processing paper: ${arxivId} - "${title}"`);
+  console.log(`Processing paper: ${arxivIdBase} - "${title}"`); // Log base ID for consistency
 
   try {
-    if (!arxivId) {
+    if (!arxivIdBase) {
       console.error(`Failed to extract arxivId from URL: ${paperUrl}`);
       return;
     }
     if (!isAnnounceTypeNew(item)) {
       console.log(
-        `Skipping paper "${title}" (ID: ${arxivId}) because its announceType ('${
+        `Skipping paper "${title}" (ID: ${arxivIdBase}) because its announceType ('${
           item.announceType || item["arxiv:announce_type"]
         }') is not new/replace/replace-cross.`
       );
@@ -815,7 +925,7 @@ async function checkAndInsertPaperIfNew(item, allCategories, pubDate) {
       .filter((cat) => cat && allowedCategories.includes(cat));
     if (paperArxivCategories.length === 0) {
       console.log(
-        `Skipping paper "${title}" (ID: ${arxivId}) because it does not have an allowed category in [${(
+        `Skipping paper "${title}" (ID: ${arxivIdBase}) because it does not have an allowed category in [${(
           item.categories || []
         )
           .map((c) => (typeof c === "string" ? c : c?._))
@@ -824,21 +934,22 @@ async function checkAndInsertPaperIfNew(item, allCategories, pubDate) {
       return;
     }
 
+    // Check using the base ArXiv ID (without version) for existence
     const { data: existingPaper, error: selectError } = await supabase
       .from("arxivPapersData")
       .select("id")
-      .eq("arxivId", arxivId)
+      .eq("arxivId", arxivIdBase) // Check against the base ID
       .maybeSingle();
     if (selectError) {
       console.error(
-        `Failed to check existing paper "${title}" (ID: ${arxivId}):`,
+        `Failed to check existing paper "${title}" (ID: ${arxivIdBase}):`,
         selectError
       );
       return;
     }
     if (existingPaper) {
       console.log(
-        `Paper "${title}" (ID: ${arxivId}) already exists. Skipping.`
+        `Paper "${title}" (ID: ${arxivIdBase}) already exists. Skipping.`
       );
       return;
     }
@@ -849,8 +960,8 @@ async function checkAndInsertPaperIfNew(item, allCategories, pubDate) {
     const abstractText = sanitizeValue(
       item.contentSnippet || item.summary || item.description || ""
     ).replace(/^Abstract:\s*/i, "");
-    const pdfUrl = generatePdfUrl(arxivId);
-    const slug = generateSlug(title || arxivId);
+    const pdfUrl = generatePdfUrl(arxivIdBase); // Use base ID for PDF URL consistency
+    const slug = generateSlug(title || arxivIdBase);
     const publishedDate = new Date(item.pubDate || pubDate).toISOString();
     const lastUpdated = new Date().toISOString();
 
@@ -859,7 +970,7 @@ async function checkAndInsertPaperIfNew(item, allCategories, pubDate) {
       .from("arxivPapersData")
       .insert([
         {
-          title: title || `arXiv:${arxivId}`,
+          title: title || `arXiv:${arxivIdBase}`,
           arxivCategories: paperArxivCategories,
           abstract: abstractText,
           paperUrl: paperUrl,
@@ -867,172 +978,195 @@ async function checkAndInsertPaperIfNew(item, allCategories, pubDate) {
           publishedDate: publishedDate,
           lastUpdated: lastUpdated,
           indexedDate: lastUpdated,
-          arxivId: arxivId,
+          arxivId: arxivIdBase, // Store the base ID in the main table
           slug: slug,
           platform: "arxiv",
           doi: doi, // Insert DOI found from RSS/API
         },
       ])
-      .select("id")
+      .select("id") // Select the UUID 'id' column
       .single();
+
     if (insertError) {
       console.error(
-        `Failed to insert paper "${title}" (ID: ${arxivId}):`,
+        `Failed to insert paper "${title}" (ID: ${arxivIdBase}):`,
         insertError
+      );
+      return; // Stop processing if paper insert fails
+    }
+
+    // Ensure we have the UUID paper_id
+    if (!insertedPaper || !insertedPaper.id) {
+      console.error(
+        `Failed to retrieve paper ID after insert for "${title}" (ID: ${arxivIdBase}). Cannot store HTML.`
       );
       return;
     }
-    const paper_id = insertedPaper.id;
+    const paper_id = insertedPaper.id; // This is the UUID
     console.log(
-      `Inserted new paper "${title}" (ID: ${arxivId}) with DB ID ${paper_id}`
+      `Inserted new paper "${title}" (ID: ${arxivIdBase}) with DB ID ${paper_id}`
     );
+
+    // --- Store HTML Asset ---
+    // Call storeArxivHtml AFTER successful paper insertion
+    // Pass the UUID paper_id and the arxiv ID (with version if available) for fetching
+    // Add a delay before fetching HTML to respect rate limits if processing many papers sequentially
+    console.log(
+      `[HTML Store] Scheduling HTML fetch for ${arxivIdBase} after delay...`
+    );
+    await delay(DELAY_BETWEEN_HTML_FETCH_MS); // Apply delay *before* the fetch
+    await storeArxivHtml(paper_id, arxivIdForHtmlFetch);
 
     // --- Process Authors ---
     const original_authors_list = original_authors_str
       ? original_authors_str.split(/,\s*(?![jJ]r\.|[IVXLCDM]+$)/g)
       : [];
     if (original_authors_list.length === 0) {
-      console.warn(`No authors found for paper ${arxivId}`);
-      return;
-    }
-
-    let crossrefAuthors = [];
-    // Use the DOI we determined for the paper (from RSS)
-    const effectiveDoi = doi;
-
-    if (effectiveDoi) {
-      console.log(`Fetching Crossref for DOI: ${effectiveDoi}`);
-      try {
-        const crossrefUrl = `https://api.crossref.org/works/${encodeURIComponent(
-          effectiveDoi
-        )}`;
-        const response = await axios.get(crossrefUrl, {
-          timeout: 15000,
-          headers: { Accept: "application/json" },
-        });
-        crossrefAuthors = response.data?.message?.author || [];
-        console.log(
-          `Found ${crossrefAuthors.length} authors in Crossref for DOI ${effectiveDoi}`
-        );
-      } catch (err) {
-        if (err.response && err.response.status === 404)
-          console.log(`Crossref returned 404 for DOI ${effectiveDoi}.`);
-        else
-          console.warn(
-            `Failed to fetch/parse Crossref for DOI ${effectiveDoi}: ${err.message}`
-          );
-      }
+      console.warn(`No authors found for paper ${arxivIdBase}`);
+      // Continue processing even if no authors? Or return? Decided to continue.
     } else {
-      console.log(`No DOI found for paper ${arxivId}, skipping Crossref.`);
-    }
+      let crossrefAuthors = [];
+      // Use the DOI we determined for the paper (from RSS)
+      const effectiveDoi = doi;
 
-    // Loop through authors from the original string
-    for (let i = 0; i < original_authors_list.length; i++) {
-      const original_name_string = sanitizeValue(original_authors_list[i]);
-      const author_order = i + 1;
-      if (!original_name_string) continue;
-
-      console.log(
-        ` -> Processing Author ${author_order}/${original_authors_list.length}: "${original_name_string}"`
-      );
-
-      let resolvedAuthorData = null;
-      let crossrefOrcidMatch = null;
-
-      // Try matching with Crossref authors first if available
-      if (crossrefAuthors.length > 0) {
-        const normalizedOriginalName = original_name_string.toLowerCase();
-        const nameParts = original_name_string.split(/\s+/);
-        const originalFamilyName = nameParts.pop() || "";
-        const originalGivenInitial = nameParts[0]
-          ? nameParts[0].charAt(0).toLowerCase()
-          : "";
-
-        const crossrefMatch = crossrefAuthors.find((ca) => {
-          const cf = (ca.family || "").toLowerCase();
-          const cg = (ca.given || "").toLowerCase();
-          const cfn = `${cg} ${cf}`.trim();
-          if (ca.ORCID && cf === originalFamilyName.toLowerCase()) return true;
-          return (
-            cfn === normalizedOriginalName ||
-            (cf === originalFamilyName.toLowerCase() &&
-              cg.startsWith(originalGivenInitial))
+      if (effectiveDoi) {
+        console.log(`Fetching Crossref for DOI: ${effectiveDoi}`);
+        try {
+          const crossrefUrl = `https://api.crossref.org/works/${encodeURIComponent(
+            effectiveDoi
+          )}`;
+          const response = await axios.get(crossrefUrl, {
+            timeout: 15000,
+            headers: { Accept: "application/json" },
+          });
+          crossrefAuthors = response.data?.message?.author || [];
+          console.log(
+            `Found ${crossrefAuthors.length} authors in Crossref for DOI ${effectiveDoi}`
           );
-        });
-
-        if (crossrefMatch?.ORCID) {
-          const orcidUrl = crossrefMatch.ORCID;
-          const orcidIdMatch = orcidUrl.match(
-            /(\d{4}-\d{4}-\d{4}-\d{3}[0-9X])$/
-          );
-          if (orcidIdMatch) {
-            crossrefOrcidMatch = orcidIdMatch[1];
-            console.log(
-              `      Found potential ORCID ${crossrefOrcidMatch} via Crossref match.`
+        } catch (err) {
+          if (err.response && err.response.status === 404)
+            console.log(`Crossref returned 404 for DOI ${effectiveDoi}.`);
+          else
+            console.warn(
+              `Failed to fetch/parse Crossref for DOI ${effectiveDoi}: ${err.message}`
             );
+        }
+      } else {
+        console.log(
+          `No DOI found for paper ${arxivIdBase}, skipping Crossref.`
+        );
+      }
+
+      // Loop through authors from the original string
+      for (let i = 0; i < original_authors_list.length; i++) {
+        const original_name_string = sanitizeValue(original_authors_list[i]);
+        const author_order = i + 1;
+        if (!original_name_string) continue;
+
+        console.log(
+          ` -> Processing Author ${author_order}/${original_authors_list.length}: "${original_name_string}"`
+        );
+
+        let resolvedAuthorData = null;
+        let crossrefOrcidMatch = null;
+
+        // Try matching with Crossref authors first if available
+        if (crossrefAuthors.length > 0) {
+          const normalizedOriginalName = original_name_string.toLowerCase();
+          const nameParts = original_name_string.split(/\s+/);
+          const originalFamilyName = nameParts.pop() || "";
+          const originalGivenInitial = nameParts[0]
+            ? nameParts[0].charAt(0).toLowerCase()
+            : "";
+
+          const crossrefMatch = crossrefAuthors.find((ca) => {
+            const cf = (ca.family || "").toLowerCase();
+            const cg = (ca.given || "").toLowerCase();
+            const cfn = `${cg} ${cf}`.trim();
+            if (ca.ORCID && cf === originalFamilyName.toLowerCase())
+              return true;
+            return (
+              cfn === normalizedOriginalName ||
+              (cf === originalFamilyName.toLowerCase() &&
+                cg.startsWith(originalGivenInitial))
+            );
+          });
+
+          if (crossrefMatch?.ORCID) {
+            const orcidUrl = crossrefMatch.ORCID;
+            const orcidIdMatch = orcidUrl.match(
+              /(\d{4}-\d{4}-\d{4}-\d{3}[0-9X])$/
+            );
+            if (orcidIdMatch) {
+              crossrefOrcidMatch = orcidIdMatch[1];
+              console.log(
+                `      Found potential ORCID ${crossrefOrcidMatch} via Crossref match.`
+              );
+            }
           }
         }
-      }
 
-      // Resolve author: Use Crossref ORCID if found, otherwise search (stricter search + high-confidence check now)
-      if (crossrefOrcidMatch) {
-        resolvedAuthorData = await resolveAuthor(
-          original_name_string,
-          crossrefOrcidMatch,
-          "FROM_CROSSREF",
-          arxivId,
-          effectiveDoi // Pass effective DOI
-        );
-      } else {
-        resolvedAuthorData = await resolveAuthor(
-          original_name_string,
-          null,
-          "SEARCH_ORCID",
-          arxivId,
-          effectiveDoi // Pass effective DOI
-        );
-      }
-
-      // Link author if resolved successfully
-      if (resolvedAuthorData?.author_id) {
-        const { error: linkError } = await supabase
-          .from("paperAuthors")
-          .insert({
-            paper_id: paper_id,
-            author_id: resolvedAuthorData.author_id,
-            author_order: author_order,
-            original_name_string: original_name_string, // Store original unsanitized? Or sanitized? Using original from list here.
-            verification_status: resolvedAuthorData.verification_status,
-          });
-        if (linkError) {
-          if (linkError.code === "23505")
-            console.warn(
-              `      Attempted to link duplicate author ${resolvedAuthorData.author_id} to paper ${paper_id}. Skipping.`
-            );
-          else
-            console.error(
-              `      DB error linking author ${resolvedAuthorData.author_id} to paper ${paper_id}:`,
-              linkError
-            );
-        } else
-          console.log(
-            `      Linked author ${resolvedAuthorData.author_id} to paper ${paper_id} with status ${resolvedAuthorData.verification_status}`
+        // Resolve author: Use Crossref ORCID if found, otherwise search (stricter search + high-confidence check now)
+        if (crossrefOrcidMatch) {
+          resolvedAuthorData = await resolveAuthor(
+            original_name_string,
+            crossrefOrcidMatch,
+            "FROM_CROSSREF",
+            arxivIdBase, // Pass base ID for consistency
+            effectiveDoi // Pass effective DOI
           );
-        // Enrichment is now handled *inside* resolveAuthor
-      } else {
-        console.error(
-          `      Could not resolve/create author record for "${original_name_string}" on paper ${arxivId}`
-        );
-      }
+        } else {
+          resolvedAuthorData = await resolveAuthor(
+            original_name_string,
+            null,
+            "SEARCH_ORCID",
+            arxivIdBase, // Pass base ID for consistency
+            effectiveDoi // Pass effective DOI
+          );
+        }
 
-      // Add delay between processing authors for rate limiting
-      await delay(DELAY_BETWEEN_AUTHORS_MS);
-    } // End author loop
+        // Link author if resolved successfully
+        if (resolvedAuthorData?.author_id) {
+          const { error: linkError } = await supabase
+            .from("paperAuthors")
+            .insert({
+              paper_id: paper_id, // Use the UUID paper_id
+              author_id: resolvedAuthorData.author_id,
+              author_order: author_order,
+              original_name_string: original_name_string, // Store original unsanitized? Or sanitized? Using original from list here.
+              verification_status: resolvedAuthorData.verification_status,
+            });
+          if (linkError) {
+            if (linkError.code === "23505")
+              console.warn(
+                `      Attempted to link duplicate author ${resolvedAuthorData.author_id} to paper ${paper_id}. Skipping.`
+              );
+            else
+              console.error(
+                `      DB error linking author ${resolvedAuthorData.author_id} to paper ${paper_id}:`,
+                linkError
+              );
+          } else
+            console.log(
+              `      Linked author ${resolvedAuthorData.author_id} to paper ${paper_id} with status ${resolvedAuthorData.verification_status}`
+            );
+          // Enrichment is now handled *inside* resolveAuthor
+        } else {
+          console.error(
+            `      Could not resolve/create author record for "${original_name_string}" on paper ${arxivIdBase}`
+          );
+        }
+
+        // Add delay between processing authors for rate limiting
+        await delay(DELAY_BETWEEN_AUTHORS_MS);
+      } // End author loop
+    } // End else block for authors processing
   } catch (error) {
     console.error(
       `Top-level error processing paper item "${title || paperUrl}":`,
       error
     );
+    // Do not attempt to store HTML if there was a top-level error before insertion
   }
 }
 
@@ -1048,10 +1182,10 @@ async function fetchPapersFromRSS(category) {
     let processedCount = 0;
     for (const item of feed.items) {
       const itemCategories = item.categories || [category]; // Use categories from item if available
+      // checkAndInsertPaperIfNew now handles the HTML fetch delay internally
       await checkAndInsertPaperIfNew(item, itemCategories, feedPubDate);
       processedCount++;
-      // Optional small delay between processing papers from RSS
-      // await delay(100);
+      // Removed delay here as it's now handled before HTML fetch within checkAndInsertPaperIfNew
     }
     console.log(
       `Finished processing ${processedCount} items for category "${category}"`
