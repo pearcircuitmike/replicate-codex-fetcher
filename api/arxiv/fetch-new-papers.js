@@ -177,7 +177,7 @@ function isAnnounceTypeNew(item) {
 }
 
 // --- ORCID API Interaction ---
-// [ORCID functions: getOrcidApiToken, searchOrcidByName, checkOrcidWorksForPaper, triggerOrcidEnrichment, resolveAuthor - remain unchanged]
+// [ORCID functions remain unchanged]
 // ... (Keep existing ORCID functions here) ...
 let orcidTokenCache = { token: null, expiry: null };
 
@@ -800,7 +800,7 @@ async function resolveAuthor(
   }
 }
 
-// --- NEW: Function to fetch and store arXiv HTML ---
+// --- CORRECTED: Function to fetch and store arXiv HTML ---
 /**
  * Fetches HTML for a given arXiv paper, gzips it, calculates hash, and stores in paper_assets.
  * Logs fetch errors to the table.
@@ -828,19 +828,28 @@ async function storeArxivHtml(paperId, arxivIdWithVersion) {
     }
 
     // Gzip Content
-    const gzippedContent = zlib.gzipSync(Buffer.from(htmlContent, "utf-8"));
+    const gzippedContentBuffer = zlib.gzipSync(
+      Buffer.from(htmlContent, "utf-8")
+    );
 
     // Calculate Hash (of uncompressed content)
     const hash = crypto.createHash("sha256").update(htmlContent).digest("hex");
 
-    // Insert into public.paper_assets
+    // *** CRITICAL FIX: Convert Buffer to hex string for BYTEA insertion ***
+    // PostgreSQL BYTEA hex format starts with '\x'
+    const hexStringForDb = "\\x" + gzippedContentBuffer.toString("hex");
+    console.log(
+      `[HTML Store] Storing gzipped data as hex string (length: ${hexStringForDb.length}) for ${plainArxivId}`
+    );
+
+    // Insert into public.paper_assets using the hex string
     const { data, error: insertError } = await supabase
       .from("paper_assets")
       .insert({
         paper_id: paperId,
         arxiv_id: plainArxivId, // Store normalized ID
         asset_type: "html_content_gzipped",
-        content_gzipped: gzippedContent, // Supabase client should handle Buffer
+        content_gzipped: hexStringForDb, // Store the hex string
         source_url: htmlUrl,
         content_hash_sha256: hash,
         content_version_identifier: versionIdentifier,
