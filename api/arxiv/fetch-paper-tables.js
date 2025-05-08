@@ -26,13 +26,8 @@ if (process.env.MISTRAL_API_KEY) {
 }
 
 // --- Configuration ---
-const BATCH_SIZE = 40; // adjust as need - match batch scheduler
-// Removed human-like behavior constants
-// const BASE_DELAY = 5000;
-// const VARIANCE_FACTOR = 0.3;
-// const MIN_PAGE_VIEW_TIME = 5000;
-// const MAX_PAGE_VIEW_TIME = 15000;
-// *** Rate Limiting Delays ***
+const BATCH_SIZE = 40; // How many papers to query from DB at once
+// Rate Limiting Delays
 const DELAY_AFTER_PDF_CHECK_MS = 300; // Delay after arXiv HEAD request
 const DELAY_AFTER_MISTRAL_CALL_MS = 1100; // Delay after Mistral API call
 
@@ -50,41 +45,26 @@ const browserHeaders = {
 
 // --- Helper Functions ---
 
-// Removed getHumanDelay and getReadingTime functions
-
-// Simple delay function (still needed for rate limiting)
+// Simple delay function
 async function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// Fetch PDF (Modified to use export.arxiv.org and remove human delays)
+// Fetch PDF (Modified to use export.arxiv.org)
 async function fetchPdf(pdfUrl, arxivId, retryCount = 0) {
-  // *** USE EXPORT DOMAIN FOR CHECK ***
+  // Use export subdomain for the HEAD check
   const exportPdfUrl = pdfUrl.replace("://arxiv.org/", "://export.arxiv.org/");
   console.log(`[NETWORK] Checking PDF for ${arxivId} at ${exportPdfUrl}...`);
-
-  // Removed referrer/cookie generation and associated delays as they were part of human simulation
-  // const referrers = [...];
-  // const selectedReferrer = ...;
-  // const cookieId = ...;
-  // const cookies = ...;
-  // const thinkingTime = getHumanDelay(2000);
-  // await delay(thinkingTime);
 
   const maxRetries = 1; // Keep minimal retries
 
   try {
-    // console.log(`[NETWORK] Sending HTTP HEAD request to ${exportPdfUrl}...`); // Less verbose
     const requestStartTime = new Date();
-
     // Use HEAD request for efficiency
     const response = await axios.head(exportPdfUrl, {
-      // Use export URL
       headers: {
-        // Use minimal required headers
         "User-Agent": browserHeaders["User-Agent"],
-        // Referer might still be useful/polite
-        Referer: `https://arxiv.org/abs/${arxivId}`,
+        Referer: `https://arxiv.org/abs/${arxivId}`, // Polite referer
       },
       timeout: 30000, // Keep timeout
       maxRedirects: 5,
@@ -97,10 +77,6 @@ async function fetchPdf(pdfUrl, arxivId, retryCount = 0) {
         response.status
       }) in ${requestDuration.toFixed(2)}s`
     );
-
-    // Removed artificial loading delay
-    // const loadingTime = getHumanDelay(3000);
-    // await delay(loadingTime);
 
     return true; // PDF exists and is accessible
   } catch (error) {
@@ -135,9 +111,9 @@ async function fetchPdf(pdfUrl, arxivId, retryCount = 0) {
   }
 }
 
-// Process document with Mistral OCR (Modified to use export.arxiv.org, removed internal human delays)
+// Process document with Mistral OCR (Modified to use export.arxiv.org)
 async function processWithMistralOCR(documentUrl, arxivId) {
-  // *** USE EXPORT DOMAIN ***
+  // Use export subdomain
   const exportDocumentUrl = documentUrl.replace(
     "://arxiv.org/",
     "://export.arxiv.org/"
@@ -150,8 +126,6 @@ async function processWithMistralOCR(documentUrl, arxivId) {
   const startTime = new Date();
   let ocrResponse = null;
 
-  // Removed human thinking delay: await delay(getHumanDelay(3000));
-
   try {
     console.log(
       `[MISTRAL OCR] Sending request to Mistral API for ${arxivId}...`
@@ -163,7 +137,7 @@ async function processWithMistralOCR(documentUrl, arxivId) {
       model: "mistral-ocr-latest",
       document: {
         type: "document_url",
-        documentUrl: exportDocumentUrl, // *** USE EXPORT URL ***
+        documentUrl: exportDocumentUrl, // Use export URL
       },
       includeImageBase64: false,
     });
@@ -215,8 +189,6 @@ async function processWithMistralOCR(documentUrl, arxivId) {
       );
     }
 
-    // Removed artificial review delay: await delay(getHumanDelay(5000));
-
     const endTime = new Date();
     const duration = (endTime - startTime) / 1000; // Duration without artificial delays
     console.log(
@@ -261,7 +233,6 @@ function detectTablesFromMarkdown(ocrResult) {
   }
   ocrResult.pages.forEach((page) => {
     if (!page.markdown) return;
-    // console.log(`[TABLE DETECTION] Analyzing page ${page.index} for table patterns`); // Less verbose
     const lines = page.markdown.split("\n");
     let tableStartLine = -1,
       inTable = false,
@@ -290,7 +261,6 @@ function detectTablesFromMarkdown(ocrResult) {
         if (consecutiveTableLines >= 3) {
           const tableContent = lines.slice(tableStartLine, i).join("\n");
           const caption = tableCaption || `Table on page ${page.index}`;
-          // console.log(`[TABLE DETECTION] Table detected with ${consecutiveTableLines} rows`); // Less verbose
           detectedTables.push({
             pageNumber: page.index,
             index: detectedTables.length,
@@ -309,7 +279,6 @@ function detectTablesFromMarkdown(ocrResult) {
     if (inTable && consecutiveTableLines >= 3) {
       const tableContent = lines.slice(tableStartLine).join("\n");
       const caption = tableCaption || `Table on page ${page.index}`;
-      // console.log(`[TABLE DETECTION] Table at end of page detected with ${consecutiveTableLines} rows`); // Less verbose
       detectedTables.push({
         pageNumber: page.index,
         index: detectedTables.length,
@@ -333,13 +302,9 @@ function extractTablesFromOCR(ocrResult, arxivId) {
     console.log(`[OCR EXTRACTION] No valid OCR result for ${arxivId}`);
     return [];
   }
-  // console.log(`[OCR EXTRACTION] Starting table extraction from OCR result for ${arxivId}`); // Less verbose
-  // console.log(`[OCR EXTRACTION] Document has ${ocrResult.pages.length} pages`); // Less verbose
-
   const tables = [];
   ocrResult.pages.forEach((page) => {
     if (page.tables && Array.isArray(page.tables) && page.tables.length > 0) {
-      // console.log(`[OCR EXTRACTION] Page ${page.index}: Found ${page.tables.length} tables`); // Less verbose
       page.tables.forEach((table, index) => {
         if (!table || !table.markdown) {
           console.warn(
@@ -393,13 +358,11 @@ function extractTablesFromOCR(ocrResult, arxivId) {
 // Process and clean tables (Unchanged from original logic)
 async function processAndCleanTables(tables, arxivId) {
   if (!tables || tables.length === 0) return [];
-  // console.log(`[TABLE PROCESSING] Starting processing of ${tables.length} tables for paper ${arxivId}`); // Less verbose
   const processedTables = tables.map((table) => ({ ...table }));
-  // console.log(`[TABLE PROCESSING] Completed processing all ${processedTables.length} tables for ${arxivId}`); // Less verbose
   return processedTables;
 }
 
-// Main Processing Function for a Single Paper (Modified to add arXiv delay, removed internal human delays)
+// Main Processing Function for a Single Paper (Modified to add arXiv delay)
 async function processAndStorePaper(paper) {
   // Name kept from original
   console.log(`\n[PAPER PROCESSING] ========================================`);
@@ -415,7 +378,7 @@ async function processAndStorePaper(paper) {
     // 1. Verify PDF exists (using export.arxiv.org)
     const pdfAccessible = await fetchPdf(pdfUrl, paper.arxivId); // Uses export internally
 
-    // *** Add delay AFTER the check to respect arXiv rate limits ***
+    // Add delay AFTER the check to respect arXiv rate limits
     console.log(
       `[Rate Limit] Delaying ${DELAY_AFTER_PDF_CHECK_MS}ms after PDF check for ${paper.arxivId}...`
     );
@@ -434,12 +397,7 @@ async function processAndStorePaper(paper) {
       );
       status = "skipped";
     } else {
-      // console.log(`[PAPER PROCESSING] PDF accessible for ${paper.id}, proceeding with OCR.`); // Less verbose
-
-      // Removed PDF examination delay: await delay(getHumanDelay(10000));
-
       // 2. Process with Mistral OCR (using export.arxiv.org)
-      // console.log(`[PAPER PROCESSING] Initiating Mistral OCR processing`); // Less verbose
       const ocrResult = await processWithMistralOCR(pdfUrl, paper.arxivId); // Pass original URL
 
       if (!ocrResult) {
@@ -613,7 +571,7 @@ async function main() {
           break;
       }
 
-      // *** Add delay AFTER processing each paper for Mistral rate limit ***
+      // Add delay AFTER processing each paper for Mistral rate limit
       if (totalProcessedInRun < papers.length) {
         console.log(
           `[Rate Limit] Delaying ${DELAY_AFTER_MISTRAL_CALL_MS}ms before next paper (Mistral limit)...`
