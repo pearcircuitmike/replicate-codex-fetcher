@@ -1,7 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import dotenv from "dotenv";
 import { Resend } from "resend";
-import Anthropic from "@anthropic-ai/sdk"; // for Claude
+import Anthropic from "@anthropic-ai/sdk";
 
 dotenv.config();
 
@@ -26,7 +26,7 @@ function getWeeklyDateRange() {
   return {
     startDate,
     endDate,
-    formatted: `${formatDate(startDate)} - ${formatDate(endDate)}`,
+    formatted: `${formatDate(startDate)} - ${formatDate(endDate)}`, // Used in email body
   };
 }
 
@@ -45,33 +45,27 @@ function renderEmptyCommunitySection(communityName) {
 }
 
 /**
- * Render up to 3 papers for a community. If there are more than 3 authors, show only the first 3 plus "and others".
+ * Render up to 3 papers for a community.
  */
 function renderCommunitySection(communityName, papers) {
   const papersHtml = papers
     .map((paper) => {
       const title = paper.title || "Untitled Paper";
-
       let authorsArr = [];
 
-      // Check if paperAuthors exists and is an array fetched from the query
       if (Array.isArray(paper.paperAuthors) && paper.paperAuthors.length > 0) {
-        // ** Explicitly sort the nested array by author_order **
         const sortedPaperAuthors = paper.paperAuthors.sort(
           (a, b) => a.author_order - b.author_order
         );
-
-        // Map sorted authors to get their canonical names
         authorsArr = sortedPaperAuthors
-          .map((pa) => pa.authors?.canonical_name) // Safely access nested name
-          .filter((name) => typeof name === "string" && name.length > 0); // Filter out null/empty names
+          .map((pa) => pa.authors?.canonical_name)
+          .filter((name) => typeof name === "string" && name.length > 0);
       }
 
       let authorsString = "";
       if (authorsArr.length === 0) {
-        authorsString = "Unknown author"; // Default if relation lookup fails or yields no names
+        authorsString = "Unknown author";
       } else if (authorsArr.length > 3) {
-        // Use "et al." for academic convention
         authorsString = authorsArr.slice(0, 3).join(", ") + ", et al.";
       } else {
         authorsString = authorsArr.join(", ");
@@ -110,7 +104,8 @@ function renderCommunitySection(communityName, papers) {
 }
 
 /**
- * For a given community, fetch tasks then the top 3 papers (by totalScore) within the provided date range.
+ * For a given community, fetch tasks then the top 3 papers (by totalScore)
+ * and their full details within the provided date range.
  */
 async function fetchPapersForCommunity(
   communityId,
@@ -122,6 +117,7 @@ async function fetchPapersForCommunity(
     .from("community_tasks")
     .select("task_id")
     .eq("community_id", communityId);
+
   if (tasksErr) {
     console.error(
       `Error fetching tasks for community ${communityId}:`,
@@ -129,15 +125,16 @@ async function fetchPapersForCommunity(
     );
     return {
       communityHtml: renderEmptyCommunitySection(communityName),
-      paperIds: [],
+      papers: [],
     };
   }
   if (!tasks || tasks.length === 0) {
     return {
       communityHtml: renderEmptyCommunitySection(communityName),
-      paperIds: [],
+      papers: [],
     };
   }
+
   const taskIds = tasks.map((t) => t.task_id);
   const { data: papers, error: papersErr } = await supabase
     .from("arxivPapersData")
@@ -161,79 +158,76 @@ async function fetchPapersForCommunity(
     .overlaps("task_ids", taskIds)
     .order("totalScore", { ascending: false })
     .limit(3);
+
   if (papersErr) {
     console.error("Error fetching top papers:", papersErr);
     return {
       communityHtml: renderEmptyCommunitySection(communityName),
-      paperIds: [],
+      papers: [],
     };
   }
   if (!papers || papers.length === 0) {
     return {
       communityHtml: renderEmptyCommunitySection(communityName),
-      paperIds: [],
+      papers: [],
     };
   }
+
   const html = renderCommunitySection(communityName, papers);
-  return { communityHtml: html, paperIds: papers.map((p) => p.id) };
+  return { communityHtml: html, papers: papers }; // Return full paper objects
 }
 
 /**
- * For the subject line, fetch details for all papers and pick one at random.
+ * Generates a subject line based on the lead paper.
  */
-async function fetchPaperDetails(paperIds) {
-  if (!paperIds || paperIds.length === 0) return {};
-  const { data, error } = await supabase
-    .from("arxivPapersData")
-    .select("id, title, authors, abstract, slug")
-    .in("id", paperIds);
-  if (error) {
-    throw new Error(`Error fetching paper details: ${error.message}`);
+async function generateSubjectLine(leadPaper) {
+  if (!leadPaper || !leadPaper.title) {
+    return "Your AIModels.fyi Weekly Update";
   }
-  const details = {};
-  for (const p of data || []) {
-    details[p.id] = p;
-  }
-  return details;
-}
 
-async function generateSubjectLine(paperDetails, dateRange) {
-  const papersArray = Object.values(paperDetails);
-  if (papersArray.length === 0) {
-    return `Your Weekly Community Digest (${dateRange.formatted})`;
-  }
-  const randomIndex = Math.floor(Math.random() * papersArray.length);
-  const randomPaper = papersArray[randomIndex];
-  const paperTitle = randomPaper?.title || "Unknown Paper";
+  const paperTitle = leadPaper.title;
+  const paperAbstract =
+    leadPaper.abstract || "No abstract available for context.";
+
   try {
     const claudeResponse = await anthropic.messages.create({
-      model: "claude-3-5-sonnet-20241022",
-      max_tokens: 60,
-      system: `You are an AI that writes a single short subject line for a research digest email.
-Never add extra text or disclaimers.
-Avoid exclamations or extra fluff.
-Output only one sentence under 90 characters.
-Maintain a calm, clear tone. Be factual.`,
+      model: "claude-3-5-sonnet-20240620", // Using latest available Sonnet model
+      max_tokens: 85,
+      system: `You are an AI copywriter for AIModels.fyi. Your goal is to craft a compelling email subject line for a WEEKLY research digest that drives opens by highlighting the *significance* of a key research paper.
+Output only one single sentence, ideally under 70 characters, max 85.
+Focus on the "signal" – what makes this paper important or impactful for an AI expert audience.
+Be factual but create intrigue. Avoid generic hype.
+DO NOT use quotation marks around the subject line itself.
+NO extra text or disclaimers.`,
       messages: [
         {
           role: "user",
-          content: `Paper title: "${paperTitle}"
-You are an AI that writes a single short subject line for a research digest email.
-No exclamations or extra fluff.`,
+          content: `Paper Title: "${paperTitle}"
+Paper Abstract (for context): "${paperAbstract.substring(0, 400)}..."
+Craft a subject line for a WEEKLY digest that makes an AI expert feel they *need* to know about this paper. Examples: "[Key finding]" or "This Week: [Compelling aspect of Paper Title]" or "New: [Intriguing part of title]".`,
         },
       ],
     });
+
     if (
       claudeResponse &&
       claudeResponse.content &&
       claudeResponse.content.length > 0
     ) {
-      return claudeResponse.content[0].text.trim();
+      let subject = claudeResponse.content[0].text.trim();
+      subject = subject.replace(/^["']|["']$/g, "");
+      return subject;
     }
   } catch (err) {
-    console.error("Error generating subject line with Claude:", err);
+    console.error(
+      "Error generating subject line with Claude for weekly digest:",
+      err
+    );
   }
-  return `Research Paper Review: ${paperTitle} (${dateRange.formatted})`;
+
+  return `Key Weekly AI Insight: ${paperTitle.substring(0, 45)}${
+    paperTitle.length > 45 ? "..." : ""
+  } | AIModels.fyi`;
 }
 
 async function sendWeeklyCommunityDigestEmail(
@@ -242,19 +236,47 @@ async function sendWeeklyCommunityDigestEmail(
   dateRange
 ) {
   let allHtml = "";
-  let allPaperIds = [];
+  let allFetchedPapersForUser = [];
+
   for (const { community_id, community_name } of userCommunities) {
-    const { communityHtml, paperIds } = await fetchPapersForCommunity(
+    const { communityHtml, papers } = await fetchPapersForCommunity(
+      // `papers` now holds full objects
       community_id,
       community_name,
       dateRange.startDate,
       dateRange.endDate
     );
     allHtml += communityHtml;
-    allPaperIds.push(...paperIds);
+    if (papers && papers.length > 0) {
+      allFetchedPapersForUser.push(...papers);
+    }
   }
-  const paperDetails = await fetchPaperDetails([...new Set(allPaperIds)]);
-  const subjectLine = await generateSubjectLine(paperDetails, dateRange);
+
+  let leadPaper = null;
+  if (allFetchedPapersForUser.length > 0) {
+    // Ensure unique papers before finding lead paper, in case of overlaps between communities
+    const uniquePapersMap = new Map();
+    allFetchedPapersForUser.forEach((paper) => {
+      // Add paper if it's not in map, or if it is but current one has higher score
+      if (
+        !uniquePapersMap.has(paper.id) ||
+        (uniquePapersMap.has(paper.id) &&
+          paper.totalScore > uniquePapersMap.get(paper.id).totalScore)
+      ) {
+        uniquePapersMap.set(paper.id, paper);
+      }
+    });
+    const uniquePapers = Array.from(uniquePapersMap.values());
+
+    if (uniquePapers.length > 0) {
+      leadPaper = uniquePapers.reduce((prev, current) => {
+        return prev.totalScore > current.totalScore ? prev : current;
+      });
+    }
+  }
+
+  const subjectLine = await generateSubjectLine(leadPaper); // Pass the single leadPaper
+
   const emailHtml = `
   <!DOCTYPE html>
   <html lang="en">
@@ -271,7 +293,11 @@ async function sendWeeklyCommunityDigestEmail(
         </h1>
       </div>
       <p style="font-size: 15px; margin: 0 0 15px 0;">
-        Hello! Here's a quick recap of activity on AImodels.fyi this week:
+        Hello${
+          userProfile.full_name ? " " + userProfile.full_name.split(" ")[0] : ""
+        }! Here's a quick recap of activity on AImodels.fyi for the week of ${
+    dateRange.formatted
+  }:
       </p>
       <div style="margin-bottom: 30px;">
         <a
@@ -297,7 +323,7 @@ async function sendWeeklyCommunityDigestEmail(
             Manage email preferences
           </a>
         </p>
-        <p style="margin: 0;">© 2025 AImodels.fyi</p>
+        <p style="margin: 0;">© ${new Date().getFullYear()} AIModels.fyi</p>
       </div>
     </div>
     </body>
@@ -317,12 +343,9 @@ async function main() {
   const dateRange = getWeeklyDateRange();
   const now = new Date();
 
-  // Compute cutoff date: today at local midnight minus 7 days.
   const cutoff = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   cutoff.setDate(cutoff.getDate() - 6);
 
-  // Build a filter string that compares last_communities_sent_at to the cutoff.
-  // We use .lt (less than) so that if a user’s last send was on the cutoff date, they are not re-sent.
   const filterString = `last_communities_sent_at.is.null,last_communities_sent_at.lt.${cutoff.toISOString()}`;
 
   const pageSize = 1000;
@@ -354,7 +377,7 @@ async function main() {
       break;
     }
     if (!pageRows || pageRows.length === 0) {
-      console.log("No more weekly users to process in this chunk.");
+      console.log("No more weekly users to process.");
       break;
     }
 
@@ -410,7 +433,6 @@ async function main() {
   }
 
   console.log("Weekly community digest job complete.");
-  process.exit(0);
 }
 
 main().catch((err) => {
