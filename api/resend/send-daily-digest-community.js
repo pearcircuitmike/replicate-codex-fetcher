@@ -18,20 +18,15 @@ const anthropic = new Anthropic({ apiKey: claudeApiKey });
 /**
  * Return the last 72-hour range for "daily" so that users get papers
  * indexed on Friday even if they're reading on the weekend.
+ * The 'formatted' property has been removed as per user feedback.
  */
 function getDailyDateRange() {
   const endDate = new Date();
-  // Look back 72 hours
   const startDate = new Date(endDate.getTime() - 72 * 60 * 60 * 1000);
-
-  function formatDate(d) {
-    return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-  }
 
   return {
     startDate,
     endDate,
-    formatted: `${formatDate(startDate)} - ${formatDate(endDate)}`,
   };
 }
 
@@ -42,7 +37,7 @@ function renderEmptyCommunitySection(communityName) {
   return `
     <div style="margin: 20px 0; padding: 20px; border: 2px solid #eaeaea; border-radius: 5px;">
       <h2 style="font-size: 16px; margin: 0;">${communityName}</h2>
-      <p style="color: #666; margin: 10px 0 0 0; font-style: italic;">No new papers found.</p>
+      <p style="color: #666; margin: 10px 0 0 0; font-style: italic;">No new papers found for this period.</p>
     </div>
   `;
 }
@@ -54,27 +49,21 @@ function renderCommunitySection(communityName, papers) {
   const papersHtml = papers
     .map((paper) => {
       const title = paper.title || "Untitled Paper";
-      // --- AUTHOR PROCESSING WITH CLIENT-SIDE SORTING ---
       let authorsArr = [];
 
-      // Check if paperAuthors exists and is an array fetched from the query
       if (Array.isArray(paper.paperAuthors) && paper.paperAuthors.length > 0) {
-        // ** Explicitly sort the nested array by author_order **
         const sortedPaperAuthors = paper.paperAuthors.sort(
           (a, b) => a.author_order - b.author_order
         );
-
-        // Map sorted authors to get their canonical names
         authorsArr = sortedPaperAuthors
-          .map((pa) => pa.authors?.canonical_name) // Safely access nested name
-          .filter((name) => typeof name === "string" && name.length > 0); // Filter out null/empty names
+          .map((pa) => pa.authors?.canonical_name)
+          .filter((name) => typeof name === "string" && name.length > 0);
       }
 
       let authorsString = "";
       if (authorsArr.length === 0) {
-        authorsString = "Unknown author"; // Default if relation lookup fails or yields no names
+        authorsString = "Unknown author";
       } else if (authorsArr.length > 3) {
-        // Use "et al." for academic convention
         authorsString = authorsArr.slice(0, 3).join(", ") + ", et al.";
       } else {
         authorsString = authorsArr.join(", ");
@@ -88,7 +77,7 @@ function renderCommunitySection(communityName, papers) {
         : "#";
 
       const score = paper.totalScore ? Math.round(Number(paper.totalScore)) : 0;
-      const scoreText = `<span style="color: #999; font-size: 12px; margin-left: 6px;">• ${score} pts</span>`;
+      const scoreText = `<span style="color: #999; font-size: 12px; margin-left: 6px;">&bull; Score: ${score}</span>`;
 
       return `
         <div style="margin-bottom: 20px; padding-bottom: 10px; border-bottom: 1px solid #eaeaea;">
@@ -110,7 +99,7 @@ function renderCommunitySection(communityName, papers) {
 }
 
 /**
- * For each community, fetch tasks → top 3 papers → build HTML + gather paper IDs.
+ * For each community, fetch tasks → top 3 papers → build HTML + gather paper objects.
  */
 async function fetchPapersForCommunity(
   communityId,
@@ -130,13 +119,13 @@ async function fetchPapersForCommunity(
     );
     return {
       communityHtml: renderEmptyCommunitySection(communityName),
-      paperIds: [],
+      papers: [],
     };
   }
   if (!tasks || tasks.length === 0) {
     return {
       communityHtml: renderEmptyCommunitySection(communityName),
-      paperIds: [],
+      papers: [],
     };
   }
 
@@ -146,14 +135,14 @@ async function fetchPapersForCommunity(
     .from("arxivPapersData")
     .select(
       `
-      id, 
-      title, 
-      abstract, 
-      slug, 
+      id,
+      title,
+      abstract,
+      slug,
       totalScore,
-      paperAuthors!inner (  
+      paperAuthors!inner (
         author_order,
-        authors!inner (      
+        authors!inner (
           canonical_name
         )
       )
@@ -169,110 +158,117 @@ async function fetchPapersForCommunity(
     console.error("Error fetching top papers:", papersErr);
     return {
       communityHtml: renderEmptyCommunitySection(communityName),
-      paperIds: [],
+      papers: [],
     };
   }
   if (!papers || papers.length === 0) {
     return {
       communityHtml: renderEmptyCommunitySection(communityName),
-      paperIds: [],
+      papers: [],
     };
   }
 
   const communityHtml = renderCommunitySection(communityName, papers);
-  return { communityHtml, paperIds: papers.map((p) => p.id) };
+  return { communityHtml, papers: papers };
 }
 
 /**
- * Pick a random paper from the combined set of paper IDs to generate the subject line.
+ * Generates a subject line based on the lead paper (highest totalScore).
  */
-async function fetchPaperDetails(paperIds) {
-  if (!paperIds || paperIds.length === 0) return {};
-  const { data, error } = await supabase
-    .from("arxivPapersData")
-    .select("id, title, authors, abstract, slug")
-    .in("id", paperIds);
-  if (error) {
-    throw new Error(`Error fetching paper details: ${error.message}`);
+async function generateSubjectLine(leadPaper) {
+  if (!leadPaper || !leadPaper.title) {
+    return "Your AIModels.fyi Daily Update";
   }
-  const details = {};
-  for (const p of data || []) {
-    details[p.id] = p;
-  }
-  return details;
-}
 
-async function generateSubjectLine(paperDetails, dateRange) {
-  const papersArray = Object.values(paperDetails);
-  if (papersArray.length === 0) {
-    return `Your Community Digest (${dateRange.formatted})`;
-  }
-  const randomIndex = Math.floor(Math.random() * papersArray.length);
-  const randomPaper = papersArray[randomIndex];
-  const paperTitle = randomPaper?.title || "Unknown Paper";
+  const paperTitle = leadPaper.title;
+  const paperAbstract =
+    leadPaper.abstract || "No abstract available for context.";
+
   try {
     const claudeResponse = await anthropic.messages.create({
-      model: "claude-3-5-sonnet-20241022",
-      max_tokens: 60,
-      system: `You are an AI that writes a single short plain-english click-driving subject line for a research digest email.
-Never add extra text or disclaimers.
-Avoid exclamations, adverbs, or buzzwords.
-Output only one sentence under 90 characters.
-Maintain a calm, clear tone. Be factual.`,
+      model: "claude-3-7-sonnet-20250219",
+      max_tokens: 85,
+      system: `You are an AI copywriter for AIModels.fyi. Your goal is to craft a compelling email subject line that drives opens by highlighting the *significance* of a key research paper.
+      Output only one single sentence, ideally under 70 characters, max 85.
+      Focus on the "signal" – what makes this paper important or impactful.
+      Be factual but create intrigue. Avoid generic hype.
+      DO NOT use quotation marks around the subject line itself.
+      NO extra text or disclaimers.`,
       messages: [
         {
           role: "user",
-          content: `Paper title: "${paperTitle}"
-You are an AI that write a single short plain-english subject line for a research digest email focused on the key insight of the paper with few words, like a news article headline.
-No exclamations or extra fluff.`,
+          content: `Paper Title: "${paperTitle}"
+          Paper Abstract (for context): "${paperAbstract.substring(0, 400)}..."
+          Craft a subject line that makes an AI expert feel they *need* to know about this paper. For example: "[Key finding]" or "[Compelling aspect of Paper Title]" or "New: [Intriguing part of title]".`,
         },
       ],
     });
+
     if (
       claudeResponse &&
       claudeResponse.content &&
       claudeResponse.content.length > 0
     ) {
-      return claudeResponse.content[0].text.trim();
+      let subject = claudeResponse.content[0].text.trim();
+      subject = subject.replace(/^["']|["']$/g, "");
+      return subject;
     }
   } catch (err) {
     console.error("Error generating subject line with Claude:", err);
   }
-  return `Research Paper Review: ${paperTitle} (${dateRange.formatted})`;
+
+  return `Key AI Insight: ${paperTitle.substring(0, 50)}${
+    paperTitle.length > 50 ? "..." : ""
+  } | AIModels.fyi`;
 }
 
 async function sendDailyCommunityDigestEmail(
   userProfile,
   userCommunities,
-  dateRange
+  dateRange // dateRange object contains startDate and endDate for fetching
 ) {
   let allCommunitiesHtml = "";
-  let allPaperIds = [];
+  let allFetchedPapersForUser = [];
+
   for (const { community_id, community_name } of userCommunities) {
-    const { communityHtml, paperIds } = await fetchPapersForCommunity(
+    // Use dateRange.startDate and dateRange.endDate for fetching
+    const { communityHtml, papers } = await fetchPapersForCommunity(
       community_id,
       community_name,
       dateRange.startDate,
       dateRange.endDate
     );
     allCommunitiesHtml += communityHtml;
-    allPaperIds.push(...paperIds);
+    if (papers && papers.length > 0) {
+      allFetchedPapersForUser.push(...papers);
+    }
   }
-  const paperDetails = await fetchPaperDetails([...new Set(allPaperIds)]);
-  const subjectLine = await generateSubjectLine(paperDetails, dateRange);
+
+  let leadPaper = null;
+  if (allFetchedPapersForUser.length > 0) {
+    leadPaper = allFetchedPapersForUser.reduce((prev, current) => {
+      return prev.totalScore > current.totalScore ? prev : current;
+    });
+  }
+
+  const subjectLine = await generateSubjectLine(leadPaper);
+
   const emailHtml = `<!DOCTYPE html>
   <html lang="en">
     <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>${subjectLine}</title> 
+      <title>${subjectLine}</title>
     </head>
     <body>
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #333;">
         <div style="text-align: left; margin-bottom: 20px;">
           <h1 style="color: #0070f3; font-size: 20px; margin-bottom: 8px;">Research & Discussion Digest</h1>
         </div>
-        <p style="font-size: 15px; margin: 0 0 15px 0;">Hello! Here's a quick recap of activity on AImodels.fyi today:</p>
+        <p style="font-size: 15px; margin: 0 0 15px 0;">Hello${
+          userProfile.full_name ? " " + userProfile.full_name.split(" ")[0] : ""
+        },</p>
+        <p style="font-size: 15px; margin: 0 0 15px 0;">Here's what people are talking about in the AI/ML research world today:</p>
         <div style="margin-bottom: 30px;">
           <a href="https://www.aimodels.fyi/dashboard" style="display: inline-block; padding: 10px 20px; color: #0070f3; text-decoration: none; font-weight: bold; border: 2px solid #0070f3; border-radius: 4px;">View Dashboard &rarr;</a>
         </div>
@@ -280,12 +276,13 @@ async function sendDailyCommunityDigestEmail(
         <div style="margin-top: 30px; font-size: 12px; color: #666; text-align: center;">
           <hr style="border: none; border-top: 1px solid #eee;" />
           <p style="margin: 10px 0;"><a href="https://www.aimodels.fyi/account" style="color: #666; text-decoration: none;">Manage email preferences</a></p>
-          <p style="margin: 0;">© 2025 AImodels.fyi</p>
+          <p style="margin: 0;">© ${new Date().getFullYear()} AIModels.fyi</p>
         </div>
       </div>
     </body>
   </html>
   `;
+
   return resend.emails.send({
     from: "Mike Young <mike@mail.aimodels.fyi>",
     replyTo: ["mike@aimodels.fyi"],
@@ -298,18 +295,17 @@ async function sendDailyCommunityDigestEmail(
 async function main() {
   console.log("Starting daily community digest job...");
   const now = new Date();
+  // dateRange will now only contain startDate and endDate.
   const dateRange = getDailyDateRange();
-  // Use today's date at local midnight as the cutoff
   const startOfToday = new Date(
     now.getFullYear(),
     now.getMonth(),
     now.getDate()
   );
-  // Build a filter string so that we select only users whose last_communities_sent_at is null
-  // or is less than today's midnight.
   const filterString = `last_communities_sent_at.is.null,last_communities_sent_at.lt.${startOfToday.toISOString()}`;
   const pageSize = 1000;
   let page = 0;
+
   while (true) {
     const { data: pageRows, error: rowErr } = await supabase
       .from("digest_subscriptions")
@@ -330,6 +326,7 @@ async function main() {
       .eq("papers_frequency", "daily")
       .or(filterString)
       .range(page * pageSize, (page + 1) * pageSize - 1);
+
     if (rowErr) {
       console.error("Error fetching daily community digest users:", rowErr);
       break;
@@ -360,11 +357,11 @@ async function main() {
         await sendDailyCommunityDigestEmail(
           row.profiles,
           userCommunities,
-          dateRange
+          dateRange // Pass the dateRange object (containing startDate and endDate)
         );
         const { error: updateErr } = await supabase
           .from("digest_subscriptions")
-          .update({ last_communities_sent_at: now.toISOString() })
+          .update({ last_communities_sent_at: new Date().toISOString() })
           .eq("user_id", row.user_id);
         if (updateErr) {
           console.error(
@@ -372,11 +369,13 @@ async function main() {
             updateErr
           );
         } else {
-          console.log(`Sent daily community digest to user ${row.user_id}`);
+          console.log(
+            `Sent daily community digest to user ${row.user_id} (${userEmail})`
+          );
         }
       } catch (err) {
         console.error(
-          `Error sending daily digest to user ${row.user_id}:`,
+          `Error sending daily digest to user ${row.user_id} (${userEmail}):`,
           err
         );
       }
